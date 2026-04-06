@@ -101,9 +101,17 @@ export async function loadFromSheets() {
 
     _sheetsMode = true;
     _rebuildIndex();
+
+    // Log counts for debugging
+    const scoreCounts = {};
+    for (const s of _scores) {
+      const key = `${s.school_year} G${s.grade} ${s.period}`;
+      scoreCounts[key] = (scoreCounts[key] || 0) + 1;
+    }
     console.log(
       `Loaded from Sheets: ${_students.length} students, ${_enrollment.length} enrollment, ${_scores.length} scores`
     );
+    console.log("Score breakdown:", scoreCounts);
   } catch (err) {
     console.error("Failed to load from Sheets:", err);
     // Keep existing data (static JSON fallback)

@@ -163,29 +163,17 @@ export async function readTab(tabName) {
 }
 
 /**
- * Read all tabs at once (batched for efficiency).
+ * Read all tabs. Fetches each tab individually to avoid response size
+ * limits with batchGet on large tabs (Scores has 2000+ rows).
  */
 export async function readAllTabs() {
   const tabs = ["Students", "Enrollment", "Scores", "BenchmarkRef"];
-  const ranges = tabs.map((t) => encodeURIComponent(t));
-  const data = await _fetch(`/values:batchGet?ranges=${ranges.join("&ranges=")}`);
-
   const result = {};
-  data.valueRanges.forEach((vr, i) => {
-    const tabName = tabs[i];
-    if (!vr.values || vr.values.length < 2) {
-      result[tabName] = [];
-      return;
-    }
-    const headers = vr.values[0];
-    result[tabName] = vr.values.slice(1).map((row) => {
-      const obj = {};
-      headers.forEach((h, j) => {
-        obj[h] = row[j] ?? "";
-      });
-      return obj;
-    });
-  });
+
+  for (const tabName of tabs) {
+    const rows = await readTab(tabName);
+    result[tabName] = rows;
+  }
 
   return result;
 }
