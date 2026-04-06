@@ -402,6 +402,127 @@ export async function rolloverYear(fromYear, toYear, assignments) {
 /**
  * Set a student's active status.
  */
+/**
+ * Add a new student and enroll them for a school year.
+ * Returns the student record, or throws if ID already exists.
+ */
+export async function addStudent(studentData, enrollmentData) {
+  const { student_id } = studentData;
+  if (_studentMap.has(student_id)) {
+    throw new Error(`Student ID ${student_id} already exists`);
+  }
+
+  const student = {
+    student_id,
+    last_name: studentData.last_name || "",
+    first_name: studentData.first_name || "",
+    preferred_name: studentData.preferred_name || "",
+    dob: studentData.dob || "",
+    cohort_year: studentData.cohort_year || "",
+    active: "TRUE",
+  };
+
+  _students.push(student);
+  _rebuildIndex();
+
+  if (enrollmentData) {
+    const enrollment = {
+      student_id,
+      school_year: enrollmentData.school_year || "",
+      grade: enrollmentData.grade || "",
+      teacher: enrollmentData.teacher || "",
+      class_id: enrollmentData.class_id || "",
+    };
+    _enrollment.push(enrollment);
+
+    if (_sheetsMode) {
+      try {
+        await appendRows("Students", [student]);
+        await appendRows("Enrollment", [enrollment]);
+      } catch (err) {
+        console.error("Failed to persist new student to Sheets:", err);
+        throw err;
+      }
+    }
+  } else {
+    if (_sheetsMode) {
+      try {
+        await appendRows("Students", [student]);
+      } catch (err) {
+        console.error("Failed to persist new student to Sheets:", err);
+        throw err;
+      }
+    }
+  }
+
+  _notify();
+  return student;
+}
+
+/**
+ * Add multiple students and enrollments in batch.
+ * Returns { added, skipped, errors }.
+ */
+export async function addStudentsBatch(entries) {
+  const added = [];
+  const skipped = [];
+  const errors = [];
+  const newStudents = [];
+  const newEnrollments = [];
+
+  for (const entry of entries) {
+    const { student_id } = entry;
+    if (!student_id) {
+      errors.push({ ...entry, reason: "Missing student ID" });
+      continue;
+    }
+    if (_studentMap.has(student_id)) {
+      skipped.push({ ...entry, reason: "ID already exists" });
+      continue;
+    }
+
+    const student = {
+      student_id,
+      last_name: entry.last_name || "",
+      first_name: entry.first_name || "",
+      preferred_name: entry.preferred_name || "",
+      dob: entry.dob || "",
+      cohort_year: entry.cohort_year || "",
+      active: "TRUE",
+    };
+    _students.push(student);
+    newStudents.push(student);
+
+    if (entry.school_year && entry.grade) {
+      const enrollment = {
+        student_id,
+        school_year: entry.school_year,
+        grade: entry.grade,
+        teacher: entry.teacher || "",
+        class_id: entry.class_id || "",
+      };
+      _enrollment.push(enrollment);
+      newEnrollments.push(enrollment);
+    }
+
+    added.push(student);
+  }
+
+  _rebuildIndex();
+
+  if (_sheetsMode) {
+    try {
+      if (newStudents.length) await appendRows("Students", newStudents);
+      if (newEnrollments.length) await appendRows("Enrollment", newEnrollments);
+    } catch (err) {
+      console.error("Failed to persist batch to Sheets:", err);
+    }
+  }
+
+  _notify();
+  return { added, skipped, errors };
+}
+
 export async function setStudentActive(studentId, active) {
   const student = _studentMap.get(studentId);
   if (student) {

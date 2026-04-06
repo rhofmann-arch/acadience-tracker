@@ -7,6 +7,8 @@ import {
   updateEnrollment,
   setStudentActive,
   rolloverYear,
+  addStudent,
+  addStudentsBatch,
   exportCsv,
   subscribe,
 } from "../lib/dataService";
@@ -303,6 +305,318 @@ function YearRollover() {
 }
 
 // ---------------------------------------------------------------------------
+// Add Students
+// ---------------------------------------------------------------------------
+function AddStudentsPanel() {
+  const [mode, setMode] = useState("paste"); // "paste", "csv", "single"
+  const [pasteText, setPasteText] = useState("");
+  const [schoolYear, setSchoolYear] = useState("2026-2027");
+  const [defaultGrade, setDefaultGrade] = useState("K");
+  const [defaultTeacher, setDefaultTeacher] = useState("");
+  const [defaultClassId, setDefaultClassId] = useState("");
+  const [message, setMessage] = useState("");
+  const [preview, setPreview] = useState([]);
+
+  // Single student fields
+  const [singleId, setSingleId] = useState("");
+  const [singleFirst, setSingleFirst] = useState("");
+  const [singleLast, setSingleLast] = useState("");
+  const [singleDob, setSingleDob] = useState("");
+  const [singleGrade, setSingleGrade] = useState("K");
+
+  function parseRoster(text) {
+    const lines = text.trim().split("\n").filter((l) => l.trim());
+    const entries = [];
+
+    for (const line of lines) {
+      // Try to parse various formats:
+      // "Last, First", ID, Grade, Gender, DOB  (SIS roster format)
+      // Last, First, ID, Grade  (simple paste)
+      // ID, First, Last, Grade  (alternate)
+      const parts = line.split(/[,\t]+/).map((s) => s.trim().replace(/^"|"$/g, ""));
+
+      // Skip header-like rows
+      if (parts.some((p) => /^(name|student|id|grade|gender)$/i.test(p))) continue;
+      // Skip row number prefix
+      let cols = parts;
+      if (/^\d+$/.test(cols[0]) && cols.length > 3) cols = cols.slice(1);
+
+      let entry = null;
+
+      // Format: "Last, First" (quoted with comma), ID, Grade, ...
+      // After split on comma: ["Last", "First"", ID, Grade, ...]
+      // Try to detect "Last, First" pattern
+      const joined = line.replace(/^"\d+",?/, ""); // strip row number
+      const quotedMatch = joined.match(/^"([^"]+)"\s*[,\t]\s*(\d{4})\s*[,\t]\s*(\w+)/);
+      if (quotedMatch) {
+        const nameParts = quotedMatch[1].split(",").map((s) => s.trim());
+        entry = {
+          last_name: nameParts[0] || "",
+          first_name: (nameParts[1] || "").split(/\s+/)[0], // strip middle initial
+          student_id: quotedMatch[2],
+          grade: normalizeGrade(quotedMatch[3]),
+        };
+        // Try to grab DOB
+        const dobMatch = joined.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+        if (dobMatch) entry.dob = dobMatch[1];
+      }
+
+      // Format: ID, First, Last, Grade  or  First, Last, ID, Grade
+      if (!entry && cols.length >= 3) {
+        if (/^\d{4}$/.test(cols[0])) {
+          entry = {
+            student_id: cols[0],
+            first_name: cols[1],
+            last_name: cols[2],
+            grade: cols[3] ? normalizeGrade(cols[3]) : defaultGrade,
+          };
+        } else if (/^\d{4}$/.test(cols[2])) {
+          entry = {
+            first_name: cols[0],
+            last_name: cols[1],
+            student_id: cols[2],
+            grade: cols[3] ? normalizeGrade(cols[3]) : defaultGrade,
+          };
+        } else if (cols[0].includes(" ") || (cols.length >= 2 && /^\d{4}$/.test(cols[1]))) {
+          // "Last First" ID format or similar
+          if (/^\d{4}$/.test(cols[1])) {
+            const names = cols[0].split(/\s+/);
+            entry = {
+              first_name: names[0],
+              last_name: names.slice(1).join(" ") || names[0],
+              student_id: cols[1],
+              grade: cols[2] ? normalizeGrade(cols[2]) : defaultGrade,
+            };
+          }
+        }
+      }
+
+      if (entry && entry.student_id) {
+        entry.school_year = schoolYear;
+        entry.grade = entry.grade || defaultGrade;
+        entry.teacher = defaultTeacher;
+        entry.class_id = defaultClassId || `${entry.grade}A`;
+        entries.push(entry);
+      }
+    }
+    return entries;
+  }
+
+  function normalizeGrade(g) {
+    if (!g) return defaultGrade;
+    g = g.trim().toUpperCase();
+    if (g === "KG" || g === "K") return "K";
+    if (g === "PS" || g === "PK" || g === "TK") return g; // preschool/TK — keep as-is
+    const n = parseInt(g);
+    if (!isNaN(n) && n >= 0 && n <= 8) return String(n);
+    return g;
+  }
+
+  function handleParse() {
+    const entries = parseRoster(pasteText);
+    setPreview(entries);
+    if (entries.length === 0) {
+      setMessage("No valid student entries found. Expected format: Name, ID, Grade (one per line).");
+    } else {
+      setMessage(`Found ${entries.length} students. Review below and click Import.`);
+    }
+  }
+
+  function handleFileUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setPasteText(ev.target.result);
+      const entries = parseRoster(ev.target.result);
+      setPreview(entries);
+      setMessage(`Loaded ${file.name}: ${entries.length} students found.`);
+    };
+    reader.readAsText(file);
+  }
+
+  async function handleImport() {
+    if (preview.length === 0) return;
+    const result = await addStudentsBatch(preview);
+    const parts = [];
+    if (result.added.length) parts.push(`${result.added.length} added`);
+    if (result.skipped.length) parts.push(`${result.skipped.length} skipped (already exist)`);
+    if (result.errors.length) parts.push(`${result.errors.length} errors`);
+    setMessage(parts.join(", "));
+    setPreview([]);
+    setPasteText("");
+  }
+
+  async function handleAddSingle() {
+    if (!singleId || !singleFirst || !singleLast) {
+      setMessage("Student ID, first name, and last name are required.");
+      return;
+    }
+    if (!/^\d{4}$/.test(singleId)) {
+      setMessage("Student ID must be a 4-digit number.");
+      return;
+    }
+    try {
+      await addStudent(
+        {
+          student_id: singleId,
+          first_name: singleFirst,
+          last_name: singleLast,
+          dob: singleDob,
+        },
+        {
+          school_year: schoolYear,
+          grade: singleGrade,
+          teacher: defaultTeacher,
+          class_id: defaultClassId || `${singleGrade}A`,
+        }
+      );
+      setMessage(`Added ${singleFirst} ${singleLast} (${singleId})`);
+      setSingleId("");
+      setSingleFirst("");
+      setSingleLast("");
+      setSingleDob("");
+    } catch (e) {
+      setMessage(e.message);
+    }
+  }
+
+  return (
+    <div className="panel">
+      <h3>Add Students</h3>
+      <p className="panel-desc">
+        Import a roster (CSV or paste) or add individual students. New students are added to the Students tab and enrolled for the specified year.
+      </p>
+
+      <div className="filters" style={{ marginBottom: 12 }}>
+        <label>School Year:</label>
+        <input
+          type="text" value={schoolYear} onChange={(e) => setSchoolYear(e.target.value)}
+          placeholder="2026-2027"
+          style={{ padding: "6px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 13, width: 100 }}
+        />
+        <label>Default Grade:</label>
+        <select value={defaultGrade} onChange={(e) => setDefaultGrade(e.target.value)}>
+          {GRADES.map((g) => <option key={g}>{g}</option>)}
+        </select>
+        <label>Teacher:</label>
+        <input
+          type="text" value={defaultTeacher} onChange={(e) => setDefaultTeacher(e.target.value)}
+          placeholder="Last name"
+          style={{ padding: "6px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 13, width: 120 }}
+        />
+        <label>Class:</label>
+        <input
+          type="text" value={defaultClassId} onChange={(e) => setDefaultClassId(e.target.value)}
+          placeholder="e.g. KA"
+          style={{ padding: "6px 10px", border: "1px solid #cbd5e1", borderRadius: 6, fontSize: 13, width: 70 }}
+        />
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button className={`btn-small ${mode === "paste" ? "btn-active" : ""}`} onClick={() => setMode("paste")}>
+          Paste Roster
+        </button>
+        <button className={`btn-small ${mode === "csv" ? "btn-active" : ""}`} onClick={() => setMode("csv")}>
+          Upload CSV
+        </button>
+        <button className={`btn-small ${mode === "single" ? "btn-active" : ""}`} onClick={() => setMode("single")}>
+          Add One Student
+        </button>
+      </div>
+
+      {message && <p className="panel-message">{message}</p>}
+
+      {mode === "paste" && (
+        <div>
+          <textarea
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder={'Paste roster here. Accepted formats:\n"Last, First", 1234, K, Female, 01/23/2020\nFirst Last, 1234, K\n1234, First, Last, K'}
+            style={{
+              width: "100%", minHeight: 120, padding: 10, fontFamily: "var(--mono)",
+              fontSize: 12, border: "1px solid #cbd5e1", borderRadius: 6, resize: "vertical",
+            }}
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button className="btn-primary" onClick={handleParse} disabled={!pasteText.trim()}>
+              Parse
+            </button>
+          </div>
+        </div>
+      )}
+
+      {mode === "csv" && (
+        <div>
+          <input type="file" accept=".csv,.txt,.tsv" onChange={handleFileUpload} />
+        </div>
+      )}
+
+      {mode === "single" && (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "#64748b" }}>Student ID *</label>
+            <input className="id-input" value={singleId} onChange={(e) => setSingleId(e.target.value)}
+              maxLength={4} placeholder="0000" />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "#64748b" }}>First Name *</label>
+            <input className="field-input" value={singleFirst} onChange={(e) => setSingleFirst(e.target.value)} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "#64748b" }}>Last Name *</label>
+            <input className="field-input" value={singleLast} onChange={(e) => setSingleLast(e.target.value)} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "#64748b" }}>DOB</label>
+            <input className="field-input" value={singleDob} onChange={(e) => setSingleDob(e.target.value)}
+              placeholder="MM/DD/YYYY" style={{ width: 100 }} />
+          </div>
+          <div>
+            <label style={{ display: "block", fontSize: 11, color: "#64748b" }}>Grade</label>
+            <select value={singleGrade} onChange={(e) => setSingleGrade(e.target.value)}
+              style={{ padding: "4px 6px", border: "1px solid #e2e8f0", borderRadius: 4, fontSize: 13 }}>
+              {GRADES.map((g) => <option key={g}>{g}</option>)}
+            </select>
+          </div>
+          <button className="btn-primary" onClick={handleAddSingle}>Add</button>
+        </div>
+      )}
+
+      {/* Preview table for batch import */}
+      {preview.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <table className="enroll-table">
+            <thead>
+              <tr>
+                <th>ID</th><th>First Name</th><th>Last Name</th>
+                <th>Grade</th><th>DOB</th><th>Year</th><th>Class</th>
+              </tr>
+            </thead>
+            <tbody>
+              {preview.map((p, i) => (
+                <tr key={i}>
+                  <td className="mono">{p.student_id}</td>
+                  <td>{p.first_name}</td>
+                  <td>{p.last_name}</td>
+                  <td>{p.grade}</td>
+                  <td>{p.dob || "—"}</td>
+                  <td>{p.school_year}</td>
+                  <td>{p.class_id}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button className="btn-primary" onClick={handleImport} style={{ marginTop: 8 }}>
+            Import {preview.length} Students
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
 function ExportPanel() {
@@ -333,6 +647,7 @@ function ExportPanel() {
 export default function EnrollmentManager() {
   return (
     <div>
+      <AddStudentsPanel />
       <IdResolutionPanel />
       <EnrollmentEditor />
       <YearRollover />
