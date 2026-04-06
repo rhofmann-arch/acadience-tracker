@@ -11,6 +11,7 @@ import {
   readAllTabs,
   appendRows,
   updateRowByKey,
+  updateRowByKeys,
   onAuthChange,
 } from "./sheetsApi";
 import { calculateComposite } from "./scoringEngine";
@@ -300,13 +301,10 @@ export async function updateEnrollment(studentId, schoolYear, updates) {
 
     if (_sheetsMode) {
       try {
-        // Find and update in Sheets by matching student_id + school_year
-        // For now we do a simple row-by-key update on student_id
-        // (works if student_id is unique per year, which it should be)
-        await updateRowByKey("Enrollment", "student_id", studentId, {
-          ...record,
-          ...updates,
-        });
+        await updateRowByKeys("Enrollment",
+          { student_id: studentId, school_year: schoolYear },
+          updates
+        );
       } catch (err) {
         console.error("Failed to persist enrollment change:", err);
       }

@@ -234,22 +234,40 @@ export async function updateRange(range, values) {
 }
 
 /**
- * Find a row by matching a column value, then update it.
- * Useful for updating a student record by student_id.
+ * Find a row by matching one or more column values, then update it.
+ *
+ * `keys` is an object of { columnName: value } to match on.
+ * All keys must match for a row to be selected.
+ *
+ * Example: updateRowByKeys("Enrollment",
+ *   { student_id: "2870", school_year: "2025-2026" },
+ *   { teacher: "Smith" })
  */
-export async function updateRowByKey(tabName, keyColumn, keyValue, updates) {
+export async function updateRowByKeys(tabName, keys, updates) {
   const data = await _fetch(`/values/${encodeURIComponent(tabName)}`);
   if (!data.values || data.values.length < 2) {
     throw new Error(`Tab "${tabName}" is empty`);
   }
 
   const headers = data.values[0];
-  const keyIdx = headers.indexOf(keyColumn);
-  if (keyIdx === -1) throw new Error(`Column "${keyColumn}" not found in ${tabName}`);
 
-  // Find the row (1-indexed, +1 for header)
-  const rowIdx = data.values.findIndex((row, i) => i > 0 && row[keyIdx] === String(keyValue));
-  if (rowIdx === -1) throw new Error(`${keyColumn}=${keyValue} not found in ${tabName}`);
+  // Resolve key column indices
+  const keyEntries = Object.entries(keys).map(([col, val]) => {
+    const idx = headers.indexOf(col);
+    if (idx === -1) throw new Error(`Column "${col}" not found in ${tabName}`);
+    return { idx, val: String(val) };
+  });
+
+  // Find the matching row
+  const rowIdx = data.values.findIndex((row, i) => {
+    if (i === 0) return false; // skip header
+    return keyEntries.every(({ idx, val }) => row[idx] === val);
+  });
+
+  if (rowIdx === -1) {
+    const keyDesc = Object.entries(keys).map(([k, v]) => `${k}=${v}`).join(", ");
+    throw new Error(`No row matching ${keyDesc} in ${tabName}`);
+  }
 
   const rowNum = rowIdx + 1; // Sheets is 1-indexed
   const updatedRow = [...data.values[rowIdx]];
@@ -263,6 +281,11 @@ export async function updateRowByKey(tabName, keyColumn, keyValue, updates) {
   const lastCol = String.fromCharCode(64 + headers.length);
   const range = `${tabName}!A${rowNum}:${lastCol}${rowNum}`;
   await updateRange(range, [updatedRow]);
+}
+
+// Backwards-compatible single-key version
+export async function updateRowByKey(tabName, keyColumn, keyValue, updates) {
+  return updateRowByKeys(tabName, { [keyColumn]: keyValue }, updates);
 }
 
 /**
