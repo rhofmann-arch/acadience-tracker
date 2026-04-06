@@ -13,10 +13,15 @@ function StatusBar({ scores, grade, period }) {
   const counts = { above: 0, at: 0, below: 0, wellBelow: 0 };
 
   for (const s of scores) {
-    let result = getBenchmarkStatus(grade, period, "composite", s.composite);
-    // Fallback to mClass level for historical data
-    if (!result && s.mclass_composite_level) {
+    let result;
+    // For mClass data, always use mClass-provided level for consistency
+    if (s.data_source === "mClass" && s.mclass_composite_level) {
       result = mclassLevelToStatus(s.mclass_composite_level);
+    } else {
+      result = getBenchmarkStatus(grade, period, "composite", s.composite);
+      if (!result && s.mclass_composite_level) {
+        result = mclassLevelToStatus(s.mclass_composite_level);
+      }
     }
     if (!result) continue;
     if (result.status === STATUS.ABOVE.status) counts.above++;

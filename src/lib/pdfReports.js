@@ -64,10 +64,19 @@ function getStatusColor(status) {
 }
 
 function getScoreStatus(grade, period, measure, value, scoreRow) {
+  const isMclass = scoreRow?.data_source === "mClass";
+
+  // For mClass composite, always use mClass-provided level for consistency
+  if (isMclass && measure === "composite") {
+    const level = scoreRow.mclass_composite_level;
+    if (level) return mclassLevelToStatus(level);
+    return null;
+  }
+
   const result = getBenchmarkStatus(grade, period, measure, value);
   if (result) return result;
   if (scoreRow) {
-    const levelKey = measure === "composite" ? "mclass_composite_level" : `${measure}_level`;
+    const levelKey = `${measure}_level`;
     const level = scoreRow[levelKey];
     if (level) return mclassLevelToStatus(level);
   }

@@ -34,13 +34,23 @@ const MEASURE_LABELS = {
  * historical data where we can't calculate Acadience benchmarks.
  */
 function getStatus(grade, period, measure, scoreValue, scoreRow) {
-  // First try Acadience benchmark calculation
+  const isMclass = scoreRow?.data_source === "mClass";
+
+  // For mClass composite, always use the mClass-provided level for consistency
+  // (Acadience composite can't be reliably calculated without retell)
+  if (isMclass && measure === "composite") {
+    const level = scoreRow.mclass_composite_level;
+    if (level) return mclassLevelToStatus(level);
+    return null;
+  }
+
+  // Try Acadience benchmark calculation
   const result = getBenchmarkStatus(grade, period, measure, scoreValue);
   if (result) return result;
 
-  // Fallback: use mClass-provided level
+  // Fallback: use mClass-provided level for sub-scores
   if (scoreRow) {
-    const levelKey = measure === "composite" ? "mclass_composite_level" : `${measure}_level`;
+    const levelKey = `${measure}_level`;
     const mclassLevel = scoreRow[levelKey];
     if (mclassLevel) return mclassLevelToStatus(mclassLevel);
   }
@@ -48,10 +58,13 @@ function getStatus(grade, period, measure, scoreValue, scoreRow) {
 }
 
 function ScoreCell({ grade, period, measure, scoreValue, scoreRow }) {
-  // For composite, show calculated Acadience composite if available,
-  // otherwise fall back to mClass composite
+  const isMclass = scoreRow?.data_source === "mClass";
+
+  // For mClass data, always show mClass composite for consistency
   let displayValue = scoreValue;
-  if (measure === "composite" && scoreValue == null && scoreRow?.mclass_composite != null) {
+  if (measure === "composite" && isMclass && scoreRow?.mclass_composite != null) {
+    displayValue = scoreRow.mclass_composite;
+  } else if (measure === "composite" && scoreValue == null && scoreRow?.mclass_composite != null) {
     displayValue = scoreRow.mclass_composite;
   }
 
@@ -72,12 +85,12 @@ function ScoreCell({ grade, period, measure, scoreValue, scoreRow }) {
         borderLeft: `3px solid ${border}`,
         color,
       }}
-      title={measure === "composite" && scoreValue == null ? `mClass: ${displayValue}` : ""}
+      title={measure === "composite" && isMclass ? `mClass composite: ${displayValue}` : ""}
     >
       {typeof displayValue === "number" && !Number.isInteger(displayValue)
         ? displayValue.toFixed(1)
         : displayValue}
-      {measure === "composite" && scoreValue == null && <span style={{ fontSize: 9, opacity: 0.6 }}> *</span>}
+      {measure === "composite" && isMclass && <span style={{ fontSize: 9, opacity: 0.6 }}> *</span>}
     </td>
   );
 }
