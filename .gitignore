@@ -11,6 +11,10 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+*.pickle
+credentials.json
+StudentRosterOptions*
 
 # Editor directories and files
 .vscode/*
