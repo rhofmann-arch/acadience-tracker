@@ -148,8 +148,26 @@ export default function ClassroomSnapshot() {
 
   const selectedClass = classes.find((c) => c.class_id === classId);
   const grade = selectedClass?.grade || "";
-  const measures = getMeasuresForGradePeriod(grade, period) || [];
+  const scheduledMeasures = getMeasuresForGradePeriod(grade, period) || [];
   const data = classId && period ? getClassScores(year, classId, period) : [];
+
+  // Build measure list: start with scheduled measures, then add any extra
+  // measures that have data (mClass collected more than the Acadience minimum)
+  const ALL_SCORE_MEASURES = [
+    "composite", "fsf", "lnf", "psf", "nwf_cls", "nwf_wwr",
+    "orf_words", "orf_accuracy", "retell", "retell_quality", "maze",
+  ];
+  const measures = useMemo(() => {
+    const scheduled = new Set(scheduledMeasures);
+    const extras = [];
+    for (const m of ALL_SCORE_MEASURES) {
+      if (scheduled.has(m)) continue;
+      // Check if any student in this class has data for this measure
+      const hasData = data.some((d) => d.score?.[m] != null && d.score[m] !== "");
+      if (hasData) extras.push(m);
+    }
+    return [...scheduledMeasures, ...extras];
+  }, [scheduledMeasures, data]);
 
   // Compute summary statuses per measure (with mClass fallback)
   const summaryByMeasure = {};
