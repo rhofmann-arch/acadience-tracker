@@ -24,6 +24,52 @@ import {
   listDrafts,
 } from "../lib/draftStore";
 
+const BASE_URL = import.meta.env.BASE_URL || "/";
+
+// ---------------------------------------------------------------------------
+// Print Materials Download
+// ---------------------------------------------------------------------------
+function MaterialsLink({ grade, period }) {
+  const [available, setAvailable] = useState(null);
+  const url = `${BASE_URL}materials/${grade}_${period}.pdf`;
+
+  useEffect(() => {
+    // Check if the PDF exists
+    setAvailable(null);
+    fetch(url, { method: "HEAD" })
+      .then((res) => setAvailable(res.ok))
+      .catch(() => setAvailable(false));
+  }, [url]);
+
+  if (available === null) return null;
+
+  if (!available) {
+    return (
+      <span style={{ fontSize: 12, color: "#94a3b8" }}>
+        Print materials not yet uploaded for Grade {grade} {period}
+      </span>
+    );
+  }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="btn-primary"
+      style={{
+        background: "#1e40af",
+        textDecoration: "none",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+      }}
+    >
+      Print Materials — Grade {grade} {period}
+    </a>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Session Setup — select year, period, class
 // ---------------------------------------------------------------------------
@@ -81,12 +127,15 @@ function SessionSetup({ onStart }) {
       )}
 
       {selectedClass && MEASURE_SCHEDULE[selectedClass.grade]?.[period] && (
-        <button
-          className="btn-primary"
-          onClick={() => onStart({ year, period, classId, grade: selectedClass.grade, classInfo: selectedClass })}
-        >
-          Begin Assessing — Grade {selectedClass.grade} {period}
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            className="btn-primary"
+            onClick={() => onStart({ year, period, classId, grade: selectedClass.grade, classInfo: selectedClass })}
+          >
+            Begin Assessing — Grade {selectedClass.grade} {period}
+          </button>
+          <MaterialsLink grade={selectedClass.grade} period={period} />
+        </div>
       )}
 
       {drafts.length > 0 && (
@@ -375,6 +424,7 @@ export default function AssessmentManager() {
         <span style={{ fontSize: 13, color: "#64748b" }}>
           Assessing: Grade {session.grade} {session.period} — {session.classInfo.teacher} ({session.classId})
         </span>
+        <MaterialsLink grade={session.grade} period={session.period} />
       </div>
       <div className="assess-layout">
         <div className="assess-sidebar">
