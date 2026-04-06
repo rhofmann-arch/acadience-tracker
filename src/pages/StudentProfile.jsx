@@ -10,6 +10,7 @@ import {
   getMeasuresForGradePeriod,
   mclassLevelToStatus,
 } from "../lib/scoringEngine";
+import { generateStudentReport } from "../lib/pdfReports";
 
 const MEASURE_LABELS = {
   composite: "Composite",
@@ -130,15 +131,28 @@ export default function StudentProfile() {
 
       {student && (
         <div>
-          <div className="profile-header">
-            <h2>
-              {student.first_name} {student.last_name}
-            </h2>
-            <div className="profile-meta">
-              ID: {student.student_id}
-              {student.cohort_year && ` · Cohort: ${student.cohort_year}`}
-              {student.dob && ` · DOB: ${student.dob}`}
+          <div className="profile-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <h2>
+                {student.first_name} {student.last_name}
+              </h2>
+              <div className="profile-meta">
+                ID: {student.student_id}
+                {student.cohort_year && ` · Cohort: ${student.cohort_year}`}
+                {student.dob && ` · DOB: ${student.dob}`}
+              </div>
             </div>
+            {history.length > 0 && (
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  const doc = generateStudentReport(student, history);
+                  doc.save(`${student.last_name}_${student.first_name}_reading_report.pdf`);
+                }}
+              >
+                Download PDF
+              </button>
+            )}
           </div>
 
           {Object.keys(byYear).length === 0 && (

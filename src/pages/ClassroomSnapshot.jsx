@@ -6,6 +6,7 @@ import {
   getClassesForYear,
   getClassScores,
 } from "../lib/dataService";
+import { generateClassroomReport } from "../lib/pdfReports";
 import {
   getBenchmarkStatus,
   getMeasuresForGradePeriod,
@@ -183,6 +184,18 @@ export default function ClassroomSnapshot() {
             </option>
           ))}
         </select>
+
+        {data.length > 0 && (
+          <button
+            className="btn-primary"
+            onClick={() => {
+              const doc = generateClassroomReport(selectedClass, data, grade, period, year);
+              doc.save(`Classroom_${grade}_${period}_${year}.pdf`);
+            }}
+          >
+            Download PDF
+          </button>
+        )}
       </div>
 
       {data.length === 0 ? (
