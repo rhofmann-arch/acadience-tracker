@@ -82,7 +82,7 @@ export async function loadFromSheets() {
     const numericFields = [
       "composite", "lnf", "fsf", "psf", "nwf_cls", "nwf_wwr",
       "orf_words", "orf_accuracy", "orf_errors", "retell", "retell_quality",
-      "maze", "wrf_historical",
+      "maze", "wrf_historical", "mclass_composite",
     ];
 
     _scores = (tabs.Scores || []).map((row) => {
