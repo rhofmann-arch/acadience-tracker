@@ -5,8 +5,9 @@ import {
   getPeriodsForYear,
   getClassesForYear,
   getClassScores,
+  getClassGrowthData,
 } from "../lib/dataService";
-import { generateClassroomReport } from "../lib/pdfReports";
+import { generateClassroomReport, generateGrowthReport } from "../lib/pdfReports";
 import {
   getBenchmarkStatus,
   getMeasuresForGradePeriod,
@@ -185,7 +186,7 @@ export default function ClassroomSnapshot() {
           ))}
         </select>
 
-        {data.length > 0 && (
+        {data.length > 0 && (<>
           <button
             className="btn-primary"
             onClick={() => {
@@ -193,9 +194,20 @@ export default function ClassroomSnapshot() {
               doc.save(`Classroom_${grade}_${period}_${year}.pdf`);
             }}
           >
-            Download PDF
+            Snapshot PDF
           </button>
-        )}
+          <button
+            className="btn-primary"
+            style={{ background: "#1e40af" }}
+            onClick={() => {
+              const growthData = getClassGrowthData(year, classId);
+              const doc = generateGrowthReport(selectedClass, growthData, grade, year);
+              doc.save(`Growth_${grade}_${year}.pdf`);
+            }}
+          >
+            Growth PDF
+          </button>
+        </>)}
       </div>
 
       {data.length === 0 ? (

@@ -1,9 +1,10 @@
 /**
  * PDF report generation for Acadience Reading Tracker.
  *
- * Two reports:
+ * Reports:
  *   1. Student Longitudinal Report — one page per student
  *   2. Classroom Snapshot — printable class roster with scores
+ *   3. Classroom Growth Report — BOY/MOY/EOY composite and ORF side by side
  */
 
 import jsPDF from "jspdf";
@@ -454,6 +455,230 @@ export function generateClassroomReport(classInfo, students, grade, period, year
     pageWidth / 2, doc.internal.pageSize.getHeight() - 15,
     { align: "center" }
   );
+
+  return doc;
+}
+
+// ---------------------------------------------------------------------------
+// Classroom Growth Report
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate a growth report showing BOY → MOY → EOY scores side by side.
+ * Page 1: Composite scores. Page 2: ORF Words scores.
+ *
+ * @param {object} classInfo - { class_id, teacher, grade }
+ * @param {Array} studentsWithScores - array of { student, scores: { BOY, MOY, EOY } }
+ *        where each period value is the score row or null
+ * @param {string} grade
+ * @param {string} year
+ */
+export function generateGrowthReport(classInfo, studentsWithScores, grade, year) {
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 30;
+
+  // Determine which periods have data
+  const periods = ["BOY", "MOY", "EOY"].filter((p) =>
+    studentsWithScores.some((s) => s.scores[p])
+  );
+
+  if (periods.length === 0) return doc;
+
+  // Sort students by last name
+  const sorted = [...studentsWithScores].sort((a, b) =>
+    (a.student.last_name || "").localeCompare(b.student.last_name || "")
+  );
+
+  // --- Helper to build one page ---
+  function buildPage(title, measure, displayLabel) {
+    let y = margin;
+
+    // Header
+    doc.setFontSize(14);
+    doc.setTextColor(...COLORS.header);
+    doc.text(`Classroom Growth Report — ${displayLabel}`, margin, y);
+    y += 18;
+
+    doc.setFontSize(10);
+    doc.setTextColor(...COLORS.subheader);
+    doc.text(
+      `${year}  ·  ${GRADE_LABELS[grade] || "Grade " + grade}  ·  ${classInfo.teacher || ""} (${classInfo.class_id})`,
+      margin, y
+    );
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin, y, { align: "right" });
+    y += 5;
+
+    // Build column headers: Student | BOY | MOY | EOY | Growth (BOY→latest)
+    const lastPeriod = periods[periods.length - 1];
+    const showGrowth = periods.length > 1;
+    const headCols = ["Student", ...periods];
+    if (showGrowth) headCols.push(`Growth (${periods[0]}→${lastPeriod})`);
+
+    const head = [headCols];
+
+    const body = sorted.map(({ student, scores }) => {
+      const name = `${student.last_name}, ${student.first_name}`;
+      const row = [name];
+
+      let firstVal = null;
+      let lastVal = null;
+
+      for (const p of periods) {
+        const scoreRow = scores[p];
+        let val = scoreRow?.[measure];
+
+        // For composite, fall back to mClass composite
+        if (measure === "composite" && val == null && scoreRow?.mclass_composite != null) {
+          val = scoreRow.mclass_composite;
+          row.push(formatScore(val) + "*");
+        } else {
+          row.push(formatScore(val));
+        }
+
+        if (val != null && !isNaN(val)) {
+          if (firstVal == null) firstVal = Number(val);
+          lastVal = Number(val);
+        }
+      }
+
+      if (showGrowth) {
+        if (firstVal != null && lastVal != null && firstVal !== lastVal) {
+          const diff = lastVal - firstVal;
+          row.push((diff > 0 ? "+" : "") + diff);
+        } else {
+          row.push("—");
+        }
+      }
+
+      return row;
+    });
+
+    autoTable(doc, {
+      startY: y + 10,
+      head,
+      body,
+      margin: { left: margin, right: margin },
+      styles: {
+        fontSize: 9,
+        cellPadding: 4,
+        lineColor: [226, 232, 240],
+        lineWidth: 0.5,
+      },
+      headStyles: {
+        fillColor: COLORS.lightGray,
+        textColor: COLORS.subheader,
+        fontStyle: "bold",
+        halign: "center",
+        fontSize: 9,
+      },
+      columnStyles: {
+        0: { halign: "left", cellWidth: 130 },
+      },
+      didParseCell: (data) => {
+        if (data.section !== "body") return;
+        const colIdx = data.column.index;
+
+        // Score columns (1 through periods.length)
+        if (colIdx >= 1 && colIdx <= periods.length) {
+          data.cell.styles.halign = "center";
+          const p = periods[colIdx - 1];
+          const studentData = sorted[data.row.index];
+          const scoreRow = studentData?.scores[p];
+          if (scoreRow) {
+            const val = scoreRow[measure];
+            const status = getScoreStatus(grade, p, measure, val, scoreRow);
+            const color = getStatusColor(status);
+            if (color) {
+              data.cell.styles.fillColor = color;
+              data.cell.styles.textColor = COLORS.white;
+            }
+          }
+        }
+
+        // Growth column
+        if (showGrowth && colIdx === periods.length + 1) {
+          data.cell.styles.halign = "center";
+          data.cell.styles.fontStyle = "bold";
+          const text = data.cell.raw;
+          if (typeof text === "string" && text.startsWith("+")) {
+            data.cell.styles.textColor = COLORS.above;
+          } else if (typeof text === "string" && text.startsWith("-")) {
+            data.cell.styles.textColor = COLORS.wellBelow;
+          }
+        }
+      },
+      theme: "grid",
+    });
+
+    y = doc.lastAutoTable.finalY + 12;
+
+    // Class averages
+    const avgRow = [];
+    for (const p of periods) {
+      const vals = sorted
+        .map(({ scores }) => {
+          const s = scores[p];
+          if (!s) return null;
+          let v = s[measure];
+          if (measure === "composite" && v == null) v = s.mclass_composite;
+          return v != null ? Number(v) : null;
+        })
+        .filter((v) => v != null);
+      if (vals.length > 0) {
+        avgRow.push(Math.round(vals.reduce((a, b) => a + b, 0) / vals.length));
+      } else {
+        avgRow.push("—");
+      }
+    }
+
+    doc.setFontSize(9);
+    doc.setTextColor(...COLORS.subheader);
+    const avgText = periods.map((p, i) => `${p}: ${avgRow[i]}`).join("    ");
+    doc.text(`Class Average — ${avgText}`, margin, y);
+    y += 14;
+
+    // Legend
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    const legends = [
+      { label: "Above", color: COLORS.above },
+      { label: "At", color: COLORS.at },
+      { label: "Below", color: COLORS.below },
+      { label: "Well Below", color: COLORS.wellBelow },
+    ];
+    let lx = margin;
+    for (const { label, color } of legends) {
+      doc.setFillColor(...color);
+      doc.rect(lx, y - 6, 8, 8, "F");
+      doc.text(label, lx + 12, y);
+      lx += doc.getTextWidth(label) + 24;
+    }
+
+    // Footer
+    doc.setFontSize(7);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      "Acadience Reading Tracker — Baymonte Christian School — Confidential",
+      pageWidth / 2, pageHeight - 15,
+      { align: "center" }
+    );
+  }
+
+  // Page 1: Composite
+  buildPage("Composite Growth", "composite", "Composite Score");
+
+  // Page 2: ORF Words (only if applicable for this grade)
+  const hasOrf = periods.some((p) => {
+    const ms = getMeasuresForGradePeriod(grade, p);
+    return ms && ms.includes("orf_words");
+  });
+
+  if (hasOrf) {
+    doc.addPage();
+    buildPage("ORF Growth", "orf_words", "Oral Reading Fluency (Words Correct)");
+  }
 
   return doc;
 }

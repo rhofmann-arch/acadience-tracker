@@ -211,6 +211,32 @@ export function getClassScores(schoolYear, classId, period) {
     );
 }
 
+/**
+ * Get all periods' scores for a class in a year.
+ * Returns array of { student, scores: { BOY, MOY, EOY } }.
+ */
+export function getClassGrowthData(schoolYear, classId) {
+  const classStudents = _enrollment.filter(
+    (e) => e.school_year === schoolYear && e.class_id === classId
+  );
+
+  return classStudents
+    .map((enrollment) => {
+      const student = _studentMap.get(enrollment.student_id);
+      const scores = {};
+      for (const period of ["BOY", "MOY", "EOY"]) {
+        scores[period] = _scores.find(
+          (s) =>
+            s.student_id === enrollment.student_id &&
+            s.school_year === schoolYear &&
+            s.period === period
+        ) || null;
+      }
+      return { student, scores };
+    })
+    .filter((r) => r.student);
+}
+
 export function getStudentHistory(studentId) {
   return _scores
     .filter((s) => s.student_id === studentId)
