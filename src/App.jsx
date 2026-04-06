@@ -4,6 +4,7 @@ import ClassroomSnapshot from "./pages/ClassroomSnapshot";
 import StudentProfile from "./pages/StudentProfile";
 import SchoolSummary from "./pages/SchoolSummary";
 import EnrollmentManager from "./pages/EnrollmentManager";
+import AssessmentManager from "./pages/AssessmentManager";
 import { initAuth, signIn, signOut, isSignedIn, onAuthChange } from "./lib/sheetsApi";
 import { isLoading, isSheetsMode, subscribe } from "./lib/dataService";
 import "./App.css";
@@ -57,6 +58,7 @@ function App() {
             </NavLink>
             <NavLink to="/student">Student Profile</NavLink>
             <NavLink to="/summary">School Summary</NavLink>
+            <NavLink to="/assess">Assess</NavLink>
             <NavLink to="/manage">Enrollment</NavLink>
           </nav>
         </header>
@@ -69,6 +71,7 @@ function App() {
             <Route path="/student" element={<StudentProfile />} />
             <Route path="/student/:studentId" element={<StudentProfile />} />
             <Route path="/summary" element={<SchoolSummary />} />
+            <Route path="/assess" element={<AssessmentManager />} />
             <Route path="/manage" element={<EnrollmentManager />} />
           </Routes>
         </main>

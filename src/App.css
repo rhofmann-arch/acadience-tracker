@@ -470,3 +470,171 @@ textarea:focus {
   border-color: #1D9E75;
   box-shadow: 0 0 0 2px rgba(29, 158, 117, 0.15);
 }
+
+/* Assessment Manager */
+.assess-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.assess-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+}
+
+.assess-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.student-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.student-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.1s;
+}
+
+.student-list-item:hover {
+  background: #f1f5f9;
+}
+
+.student-list-item.selected {
+  background: #1D9E75;
+  color: white;
+}
+
+.student-list-item.selected .student-list-status {
+  color: rgba(255,255,255,0.7);
+}
+
+.student-list-name {
+  font-weight: 500;
+}
+
+.student-list-status {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.status-submitted {
+  color: #1D9E75;
+}
+
+.status-draft {
+  color: #EF9F27;
+}
+
+.status-not_started {
+  color: #cbd5e1;
+}
+
+.subtest-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.subtest-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px 16px;
+  background: #fafbfc;
+}
+
+.subtest-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.subtest-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.subtest-timing {
+  font-size: 11px;
+  color: #94a3b8;
+  background: #f1f5f9;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.subtest-directions {
+  font-size: 12px;
+  color: #475569;
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.subtest-tips {
+  font-size: 11px;
+  color: #64748b;
+  background: #fffbeb;
+  border: 1px solid #fef3c7;
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+}
+
+.subtest-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.subtest-input-row label {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+  min-width: fit-content;
+}
+
+.score-input {
+  width: 80px;
+  padding: 6px 10px;
+  border: 2px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 16px;
+  font-family: var(--mono);
+  font-weight: 600;
+  text-align: center;
+}
+
+.score-input:focus {
+  outline: none;
+  border-color: #1D9E75;
+  box-shadow: 0 0 0 3px rgba(29, 158, 117, 0.15);
+}
+
+.score-input.input-error {
+  border-color: #D85A30;
+}
+
+.input-error-msg {
+  font-size: 11px;
+  color: #D85A30;
+  font-weight: 500;
+}
+
+@media (max-width: 768px) {
+  .assess-layout {
+    flex-direction: column;
+  }
+  .assess-sidebar {
+    width: 100%;
+  }
+}
