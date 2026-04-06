@@ -30,20 +30,27 @@ const BASE_URL = import.meta.env.BASE_URL || "/";
 // Print Materials Download
 // ---------------------------------------------------------------------------
 function MaterialsLink({ grade, period }) {
-  const [available, setAvailable] = useState(null);
-  const url = `${BASE_URL}materials/${grade}_${period}.pdf`;
+  const [studentAvail, setStudentAvail] = useState(null);
+  const [scoringAvail, setScoringAvail] = useState(null);
+
+  const studentUrl = `${BASE_URL}materials/${grade}_${period}.pdf`;
+  const scoringUrl = `${BASE_URL}materials/${grade}_${period}_scoring.pdf`;
 
   useEffect(() => {
-    // Check if the PDF exists
-    setAvailable(null);
-    fetch(url, { method: "HEAD" })
-      .then((res) => setAvailable(res.ok))
-      .catch(() => setAvailable(false));
-  }, [url]);
+    setStudentAvail(null);
+    setScoringAvail(null);
+    fetch(studentUrl, { method: "HEAD" })
+      .then((res) => setStudentAvail(res.ok))
+      .catch(() => setStudentAvail(false));
+    fetch(scoringUrl, { method: "HEAD" })
+      .then((res) => setScoringAvail(res.ok))
+      .catch(() => setScoringAvail(false));
+  }, [studentUrl, scoringUrl]);
 
-  if (available === null) return null;
+  if (studentAvail === null && scoringAvail === null) return null;
 
-  if (!available) {
+  const neither = !studentAvail && !scoringAvail;
+  if (neither) {
     return (
       <span style={{ fontSize: 12, color: "#94a3b8" }}>
         Print materials not yet uploaded for Grade {grade} {period}
@@ -52,21 +59,30 @@ function MaterialsLink({ grade, period }) {
   }
 
   return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="btn-primary"
-      style={{
-        background: "#1e40af",
-        textDecoration: "none",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-      }}
-    >
-      Print Materials — Grade {grade} {period}
-    </a>
+    <div style={{ display: "inline-flex", gap: 6 }}>
+      {studentAvail && (
+        <a
+          href={studentUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-primary"
+          style={{ background: "#1e40af", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
+        >
+          Student Materials
+        </a>
+      )}
+      {scoringAvail && (
+        <a
+          href={scoringUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-primary"
+          style={{ background: "#7c3aed", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
+        >
+          Teacher Scoring
+        </a>
+      )}
+    </div>
   );
 }
 
