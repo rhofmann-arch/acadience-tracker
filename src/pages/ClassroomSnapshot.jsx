@@ -157,17 +157,14 @@ export default function ClassroomSnapshot() {
     "composite", "fsf", "lnf", "psf", "nwf_cls", "nwf_wwr",
     "orf_words", "orf_accuracy", "retell", "retell_quality", "maze",
   ];
-  const measures = useMemo(() => {
-    const scheduled = new Set(scheduledMeasures);
-    const extras = [];
-    for (const m of ALL_SCORE_MEASURES) {
-      if (scheduled.has(m)) continue;
-      // Check if any student in this class has data for this measure
-      const hasData = data.some((d) => d.score?.[m] != null && d.score[m] !== "");
-      if (hasData) extras.push(m);
-    }
-    return [...scheduledMeasures, ...extras];
-  }, [scheduledMeasures, data]);
+  const scheduled = new Set(scheduledMeasures);
+  const extras = [];
+  for (const m of ALL_SCORE_MEASURES) {
+    if (scheduled.has(m)) continue;
+    const hasData = data.some((d) => d.score != null && d.score[m] != null);
+    if (hasData) extras.push(m);
+  }
+  const measures = [...scheduledMeasures, ...extras];
 
   // Compute summary statuses per measure (with mClass fallback)
   const summaryByMeasure = {};
