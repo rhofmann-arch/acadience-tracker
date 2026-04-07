@@ -24,6 +24,7 @@ let _enrollment = [...importData.enrollment];
 let _scores = [...importData.scores];
 let _diagnostics = [];
 let _iowa = [];
+let _capti = [];
 let _sheetsMode = false; // true when live-connected to Google Sheets
 let _loading = false;
 
@@ -127,6 +128,21 @@ export async function loadFromSheets() {
       return rec;
     });
 
+    // Parse Capti ReadBasix scores
+    const captiNumeric = [
+      "word_recognition", "vocabulary", "morphology",
+      "sentence_processing", "reading_efficiency", "reading_comprehension",
+    ];
+    _capti = (tabs.Capti || []).map((row) => {
+      const rec = { ...row };
+      for (const field of captiNumeric) {
+        const v = rec[field];
+        if (v === "" || v == null) rec[field] = null;
+        else { const n = Number(v); rec[field] = isNaN(n) ? null : n; }
+      }
+      return rec;
+    });
+
     _sheetsMode = true;
     _rebuildIndex();
 
@@ -160,6 +176,7 @@ onAuthChange((signedIn) => {
     _scores = [...importData.scores];
     _diagnostics = [];
     _iowa = [];
+    _capti = [];
     _sheetsMode = false;
     _rebuildIndex();
     _notify();
@@ -313,6 +330,46 @@ export function getIowaScores(studentId) {
   return _iowa
     .filter((r) => r.student_id === studentId)
     .sort((a, b) => (a.school_year || "").localeCompare(b.school_year || ""));
+}
+
+/**
+ * Get Capti ReadBasix scores for a student, sorted by school year then period.
+ */
+export function getCaptiScores(studentId) {
+  const order = { BOY: 0, MOY: 1, EOY: 2 };
+  return _capti
+    .filter((r) => r.student_id === studentId)
+    .sort((a, b) => {
+      if (a.school_year !== b.school_year)
+        return (a.school_year || "").localeCompare(b.school_year || "");
+      return (order[a.period] || 0) - (order[b.period] || 0);
+    });
+}
+
+/**
+ * Get Capti ReadBasix scores for a class in a given year/period.
+ * Matches via enrollment.
+ */
+export function getCaptiClassScores(schoolYear, classId, period) {
+  const classStudents = _enrollment.filter(
+    (e) => e.school_year === schoolYear && e.class_id === classId
+  );
+
+  return classStudents
+    .map((enrollment) => {
+      const student = _studentMap.get(enrollment.student_id);
+      const score = _capti.find(
+        (s) =>
+          s.student_id === enrollment.student_id &&
+          s.school_year === schoolYear &&
+          s.period === period
+      );
+      return { student, enrollment, score: score || null };
+    })
+    .filter((r) => r.student)
+    .sort((a, b) =>
+      (a.student.last_name || "").localeCompare(b.student.last_name || "")
+    );
 }
 
 /**
@@ -664,7 +721,7 @@ export async function submitScore(scoreData) {
 // ---------------------------------------------------------------------------
 
 export function exportData() {
-  return { students: _students, enrollment: _enrollment, scores: _scores, diagnostics: _diagnostics };
+  return { students: _students, enrollment: _enrollment, scores: _scores, diagnostics: _diagnostics, capti: _capti };
 }
 
 export function exportCsv(dataset) {

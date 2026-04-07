@@ -15,6 +15,7 @@ dist-ssr
 *.pickle
 credentials.json
 StudentRosterOptions*
+capti/
 
 # Editor directories and files
 .vscode/*

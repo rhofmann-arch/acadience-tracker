@@ -6,8 +6,9 @@ import {
   getClassesForYear,
   getClassScores,
   getClassGrowthData,
+  getCaptiClassScores,
 } from "../lib/dataService";
-import { generateClassroomReport, generateGrowthReport } from "../lib/pdfReports";
+import { generateClassroomReport, generateCaptiClassroomReport, generateGrowthReport } from "../lib/pdfReports";
 import {
   getBenchmarkStatus,
   getMeasuresForGradePeriod,
@@ -138,6 +139,104 @@ function SummaryBar({ statuses }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Capti ReadBasix performance bands (Grades 5+)
+// ---------------------------------------------------------------------------
+const CAPTI_MEASURES = [
+  { key: "word_recognition", label: "Word Recog." },
+  { key: "vocabulary", label: "Vocabulary" },
+  { key: "morphology", label: "Morphology" },
+  { key: "sentence_processing", label: "Sent. Processing" },
+  { key: "reading_efficiency", label: "Reading Eff." },
+  { key: "reading_comprehension", label: "Reading Comp." },
+  { key: "lexile", label: "Lexile" },
+];
+
+function getCaptiColor(score) {
+  if (score == null || score === "") return null;
+  const n = typeof score === "number" ? score : Number(score);
+  if (isNaN(n)) return null;
+  if (n >= 265) return "#1D9E75";     // Strong (dark green)
+  if (n >= 250) return "#1D9E75";     // High Average (green)
+  if (n >= 236) return "#EF9F27";     // Low Average (amber)
+  return "#D85A30";                    // Weak (red)
+}
+
+function getCaptiLabel(score) {
+  if (score == null || score === "") return null;
+  const n = typeof score === "number" ? score : Number(score);
+  if (isNaN(n)) return null;
+  if (n >= 265) return "strong";
+  if (n >= 250) return "highAvg";
+  if (n >= 236) return "lowAvg";
+  return "weak";
+}
+
+function CaptiScoreCell({ value }) {
+  if (value == null || value === "") {
+    return <td className="score-cell" style={{ color: "#cbd5e1" }}>—</td>;
+  }
+  const color = getCaptiColor(value);
+  const bg = color ? color + "22" : "transparent";
+  const border = color ? color + "44" : "transparent";
+  return (
+    <td
+      className="score-cell"
+      style={{
+        backgroundColor: bg,
+        borderLeft: `3px solid ${border}`,
+        color: color || "#64748b",
+      }}
+    >
+      {value}
+    </td>
+  );
+}
+
+function CaptiSummaryBar({ scores }) {
+  const counts = { strong: 0, highAvg: 0, lowAvg: 0, weak: 0 };
+  for (const s of scores) {
+    const label = getCaptiLabel(s);
+    if (label) counts[label]++;
+  }
+  const total = counts.strong + counts.highAvg + counts.lowAvg + counts.weak;
+  if (total === 0) return <td className="score-cell">—</td>;
+  const pct = (n) => ((n / total) * 100).toFixed(0);
+
+  return (
+    <td className="score-cell" style={{ padding: "4px 6px" }}>
+      <div className="summary-bar">
+        {counts.strong > 0 && (
+          <div className="seg" style={{ flex: counts.strong, background: "#1D9E75" }}>
+            {pct(counts.strong) + "%"}
+          </div>
+        )}
+        {counts.highAvg > 0 && (
+          <div className="seg" style={{ flex: counts.highAvg, background: "#4db892" }}>
+            {pct(counts.highAvg) + "%"}
+          </div>
+        )}
+        {counts.lowAvg > 0 && (
+          <div className="seg" style={{ flex: counts.lowAvg, background: "#EF9F27" }}>
+            {pct(counts.lowAvg) + "%"}
+          </div>
+        )}
+        {counts.weak > 0 && (
+          <div className="seg" style={{ flex: counts.weak, background: "#D85A30" }}>
+            {pct(counts.weak) + "%"}
+          </div>
+        )}
+      </div>
+      <div className="summary-pct">n={total}</div>
+    </td>
+  );
+}
+
+function isCaptiGrade(grade) {
+  const g = grade === "K" ? 0 : parseInt(grade) || 0;
+  return g >= 5;
+}
+
 export default function ClassroomSnapshot() {
   const years = getSchoolYears();
   const [year, setYear] = useState(years[0] || "");
@@ -161,8 +260,10 @@ export default function ClassroomSnapshot() {
 
   const selectedClass = classes.find((c) => c.class_id === classId);
   const grade = selectedClass?.grade || "";
+  const useCapti = isCaptiGrade(grade);
   const scheduledMeasures = getMeasuresForGradePeriod(grade, period) || [];
   const data = classId && period ? getClassScores(year, classId, period) : [];
+  const captiData = classId && period && useCapti ? getCaptiClassScores(year, classId, period) : [];
 
   // Build measure list: start with scheduled measures, then add any extra
   // measures that have data (mClass collected more than the Acadience minimum)
@@ -187,6 +288,18 @@ export default function ClassroomSnapshot() {
       return getStatus(grade, period, m, d.score[m], d.score);
     });
   }
+
+  // For Capti: compute summary scores per measure
+  const captiSummaryByMeasure = {};
+  if (useCapti) {
+    for (const { key } of CAPTI_MEASURES) {
+      captiSummaryByMeasure[key] = captiData.map((d) => d.score?.[key] ?? null);
+    }
+  }
+
+  const hasCaptiData = captiData.some((d) => d.score);
+  const hasAcadienceData = data.length > 0;
+  const showData = useCapti ? hasCaptiData : hasAcadienceData;
 
   return (
     <div>
@@ -214,35 +327,85 @@ export default function ClassroomSnapshot() {
           ))}
         </select>
 
-        {data.length > 0 && (<>
+        {showData && (<>
           <button
             className="btn-primary"
             onClick={() => {
-              const doc = generateClassroomReport(selectedClass, data, grade, period, year);
-              doc.save(`Classroom_${grade}_${period}_${year}.pdf`);
+              if (useCapti) {
+                const doc = generateCaptiClassroomReport(selectedClass, captiData, grade, period, year);
+                doc.save(`Capti_Classroom_${grade}_${period}_${year}.pdf`);
+              } else {
+                const doc = generateClassroomReport(selectedClass, data, grade, period, year);
+                doc.save(`Classroom_${grade}_${period}_${year}.pdf`);
+              }
             }}
           >
             Snapshot PDF
           </button>
-          <button
-            className="btn-primary"
-            style={{ background: "#1e40af" }}
-            onClick={() => {
-              const growthData = getClassGrowthData(year, classId);
-              const doc = generateGrowthReport(selectedClass, growthData, grade, year);
-              doc.save(`Growth_${grade}_${year}.pdf`);
-            }}
-          >
-            Growth PDF
-          </button>
+          {!useCapti && (
+            <button
+              className="btn-primary"
+              style={{ background: "#1e40af" }}
+              onClick={() => {
+                const growthData = getClassGrowthData(year, classId);
+                const doc = generateGrowthReport(selectedClass, growthData, grade, year);
+                doc.save(`Growth_${grade}_${year}.pdf`);
+              }}
+            >
+              Growth PDF
+            </button>
+          )}
         </>)}
       </div>
 
-      {data.length === 0 ? (
+      {!showData ? (
         <div className="no-data">
           No scores found for this selection.
         </div>
+      ) : useCapti ? (
+        /* --- Capti ReadBasix table for grade 5+ --- */
+        <div style={{ overflowX: "auto" }}>
+          <p style={{ fontSize: 12, color: "#64748b", marginBottom: 8 }}>
+            Capti ReadBasix — Scale scores 190-310. Performance bands: Weak (190-235), Low Average (236-249), High Average (250-264), Strong (265-310).
+          </p>
+          <table className="score-table">
+            <thead>
+              <tr>
+                <th style={{ minWidth: 160 }}>Student</th>
+                {CAPTI_MEASURES.map((m) => (
+                  <th key={m.key} className="measure-col">{m.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {/* Summary row */}
+              <tr className="summary-row">
+                <td style={{ fontWeight: 700, fontSize: 12, color: "#64748b" }}>
+                  Class Summary
+                </td>
+                {CAPTI_MEASURES.map((m) => (
+                  <CaptiSummaryBar key={m.key} scores={captiSummaryByMeasure[m.key] || []} />
+                ))}
+              </tr>
+
+              {/* Student rows */}
+              {captiData.map(({ student, score }) => (
+                <tr key={student.student_id}>
+                  <td className="student-name">
+                    <Link to={`/student/${student.student_id}`}>
+                      {student.last_name}, {student.first_name}
+                    </Link>
+                  </td>
+                  {CAPTI_MEASURES.map((m) => (
+                    <CaptiScoreCell key={m.key} value={score?.[m.key]} />
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : (
+        /* --- Acadience table for K-4 --- */
         <div style={{ overflowX: "auto" }}>
           <table className="score-table">
             <thead>

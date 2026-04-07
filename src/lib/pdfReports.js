@@ -52,7 +52,32 @@ const GRADE_LABELS = {
   4: "Grade 4",
   5: "Grade 5",
   6: "Grade 6",
+  7: "Grade 7",
+  8: "Grade 8",
 };
+
+// ---------------------------------------------------------------------------
+// Capti ReadBasix constants
+// ---------------------------------------------------------------------------
+const CAPTI_MEASURES = [
+  { key: "word_recognition", label: "Word Recog." },
+  { key: "vocabulary", label: "Vocabulary" },
+  { key: "morphology", label: "Morphology" },
+  { key: "sentence_processing", label: "Sent. Proc." },
+  { key: "reading_efficiency", label: "Read. Eff." },
+  { key: "reading_comprehension", label: "Read. Comp." },
+  { key: "lexile", label: "Lexile" },
+];
+
+function getCaptiStatusColor(score) {
+  if (score == null || score === "") return null;
+  const n = typeof score === "number" ? score : Number(score);
+  if (isNaN(n)) return null;
+  if (n >= 265) return COLORS.above;      // Strong
+  if (n >= 250) return COLORS.above;      // High Average
+  if (n >= 236) return COLORS.below;      // Low Average (amber)
+  return COLORS.wellBelow;                 // Weak (red)
+}
 
 function getStatusColor(status) {
   if (!status) return null;
@@ -162,7 +187,7 @@ function getRecommendations(grade, period, scoreRow) {
 // ---------------------------------------------------------------------------
 // Student Longitudinal Report
 // ---------------------------------------------------------------------------
-export function generateStudentReport(student, history, pmScores) {
+export function generateStudentReport(student, history, pmScores, captiScores) {
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 40;
@@ -203,13 +228,25 @@ export function generateStudentReport(student, history, pmScores) {
   // Group history by year
   const byYear = {};
   for (const row of history) {
-    if (!byYear[row.school_year]) byYear[row.school_year] = [];
-    byYear[row.school_year].push(row);
+    if (!byYear[row.school_year]) byYear[row.school_year] = { acadience: [], capti: [] };
+    byYear[row.school_year].acadience.push(row);
   }
 
+  // Interleave Capti scores by year
+  if (captiScores) {
+    for (const rec of captiScores) {
+      if (!byYear[rec.school_year]) byYear[rec.school_year] = { acadience: [], capti: [] };
+      byYear[rec.school_year].capti.push(rec);
+    }
+  }
+
+  // Reverse chronological order
+  const sortedYears = Object.keys(byYear).sort().reverse();
+
   // --- Score tables per year ---
-  for (const [year, rows] of Object.entries(byYear)) {
-    const grade = rows[0].grade;
+  for (const year of sortedYears) {
+    const { acadience: rows, capti } = byYear[year];
+    const grade = rows[0]?.grade || capti[0]?.grade || "";
 
     // Check if we need a new page
     if (y > 650) {
@@ -217,94 +254,155 @@ export function generateStudentReport(student, history, pmScores) {
       y = margin;
     }
 
-    // Year/grade header
-    doc.setFontSize(11);
-    doc.setTextColor(...COLORS.header);
-    doc.text(`${year} — ${GRADE_LABELS[grade] || "Grade " + grade}`, margin, y);
-    y += 8;
-
-    // Collect all measures for this year
-    const allMeasures = new Set();
-    for (const row of rows) {
-      const ms = getMeasuresForGradePeriod(row.grade, row.period);
-      if (ms) ms.forEach((m) => allMeasures.add(m));
-    }
-    const measures = [...allMeasures];
-
-    // Build table data
-    const head = [["Period", ...measures.map((m) => MEASURE_LABELS[m] || m)]];
-    const body = rows.map((row) => {
-      return [
-        row.period,
-        ...measures.map((m) => {
-          let val = row[m];
-          if (m === "composite" && val == null && row.mclass_composite != null) {
-            return formatScore(row.mclass_composite) + "*";
-          }
-          return formatScore(val);
-        }),
-      ];
-    });
-
-    autoTable(doc, {
-      startY: y,
-      head,
-      body,
-      margin: { left: margin, right: margin },
-      styles: {
-        fontSize: 9,
-        cellPadding: 3,
-        lineColor: [226, 232, 240],
-        lineWidth: 0.5,
-      },
-      headStyles: {
-        fillColor: COLORS.lightGray,
-        textColor: COLORS.subheader,
-        fontStyle: "bold",
-        halign: "center",
-      },
-      columnStyles: {
-        0: { halign: "left", fontStyle: "bold" },
-      },
-      didParseCell: (data) => {
-        if (data.section === "body" && data.column.index > 0) {
-          data.cell.styles.halign = "center";
-
-          const measure = measures[data.column.index - 1];
-          const row = rows[data.row.index];
-          const val = row[measure];
-          const status = getScoreStatus(row.grade, row.period, measure, val, row);
-          const color = getStatusColor(status);
-          if (color) {
-            data.cell.styles.fillColor = [...color, 35].length ? color : COLORS.white;
-            data.cell.styles.textColor = COLORS.white;
-          }
-        }
-      },
-      theme: "grid",
-    });
-
-    y = doc.lastAutoTable.finalY + 12;
-
-    // Recommendations for most recent period in this year
-    const latestRow = rows[rows.length - 1];
-    const recs = getRecommendations(grade, latestRow.period, latestRow);
-
-    if (recs.length > 0 && y < 680) {
-      doc.setFontSize(9);
-      doc.setTextColor(...COLORS.subheader);
-      doc.text("Recommendations:", margin, y);
-      y += 11;
-
-      doc.setFontSize(8);
-      doc.setTextColor(100, 116, 139);
-      for (const rec of recs) {
-        const lines = doc.splitTextToSize(`• ${rec}`, pageWidth - margin * 2);
-        if (y + lines.length * 10 > 720) break;
-        doc.text(lines, margin + 8, y);
-        y += lines.length * 10 + 2;
-      }
+    // --- Acadience scores ---
+    if (rows.length > 0) {
+      // Year/grade header
+      doc.setFontSize(11);
+      doc.setTextColor(...COLORS.header);
+      doc.text(`${year} — ${GRADE_LABELS[grade] || "Grade " + grade}`, margin, y);
       y += 8;
+
+      // Collect all measures for this year
+      const allMeasures = new Set();
+      for (const row of rows) {
+        const ms = getMeasuresForGradePeriod(row.grade, row.period);
+        if (ms) ms.forEach((m) => allMeasures.add(m));
+      }
+      const measures = [...allMeasures];
+
+      // Build table data
+      const head = [["Period", ...measures.map((m) => MEASURE_LABELS[m] || m)]];
+      const body = rows.map((row) => {
+        return [
+          row.period,
+          ...measures.map((m) => {
+            let val = row[m];
+            if (m === "composite" && val == null && row.mclass_composite != null) {
+              return formatScore(row.mclass_composite) + "*";
+            }
+            return formatScore(val);
+          }),
+        ];
+      });
+
+      autoTable(doc, {
+        startY: y,
+        head,
+        body,
+        margin: { left: margin, right: margin },
+        styles: {
+          fontSize: 9,
+          cellPadding: 3,
+          lineColor: [226, 232, 240],
+          lineWidth: 0.5,
+        },
+        headStyles: {
+          fillColor: COLORS.lightGray,
+          textColor: COLORS.subheader,
+          fontStyle: "bold",
+          halign: "center",
+        },
+        columnStyles: {
+          0: { halign: "left", fontStyle: "bold" },
+        },
+        didParseCell: (data) => {
+          if (data.section === "body" && data.column.index > 0) {
+            data.cell.styles.halign = "center";
+
+            const measure = measures[data.column.index - 1];
+            const row = rows[data.row.index];
+            const val = row[measure];
+            const status = getScoreStatus(row.grade, row.period, measure, val, row);
+            const color = getStatusColor(status);
+            if (color) {
+              data.cell.styles.fillColor = [...color, 35].length ? color : COLORS.white;
+              data.cell.styles.textColor = COLORS.white;
+            }
+          }
+        },
+        theme: "grid",
+      });
+
+      y = doc.lastAutoTable.finalY + 12;
+
+      // Recommendations for most recent period in this year
+      const latestRow = rows[rows.length - 1];
+      const recs = getRecommendations(grade, latestRow.period, latestRow);
+
+      if (recs.length > 0 && y < 680) {
+        doc.setFontSize(9);
+        doc.setTextColor(...COLORS.subheader);
+        doc.text("Recommendations:", margin, y);
+        y += 11;
+
+        doc.setFontSize(8);
+        doc.setTextColor(100, 116, 139);
+        for (const rec of recs) {
+          const lines = doc.splitTextToSize(`• ${rec}`, pageWidth - margin * 2);
+          if (y + lines.length * 10 > 720) break;
+          doc.text(lines, margin + 8, y);
+          y += lines.length * 10 + 2;
+        }
+        y += 8;
+      }
+    }
+
+    // --- Capti ReadBasix scores ---
+    if (capti.length > 0) {
+      if (y > 650) {
+        doc.addPage();
+        y = margin;
+      }
+
+      doc.setFontSize(11);
+      doc.setTextColor(...COLORS.header);
+      doc.text(`${year} — Grade ${capti[0].grade} (Capti ReadBasix)`, margin, y);
+      y += 8;
+
+      const captiHead = [["Period", ...CAPTI_MEASURES.map((m) => m.label)]];
+      const captiBody = capti.map((rec) => [
+        rec.period,
+        ...CAPTI_MEASURES.map((m) => formatScore(rec[m.key])),
+      ]);
+
+      autoTable(doc, {
+        startY: y,
+        head: captiHead,
+        body: captiBody,
+        margin: { left: margin, right: margin },
+        styles: {
+          fontSize: 9,
+          cellPadding: 3,
+          lineColor: [226, 232, 240],
+          lineWidth: 0.5,
+        },
+        headStyles: {
+          fillColor: [240, 253, 244],   // light green background
+          textColor: COLORS.subheader,
+          fontStyle: "bold",
+          halign: "center",
+        },
+        columnStyles: {
+          0: { halign: "left", fontStyle: "bold" },
+        },
+        didParseCell: (data) => {
+          if (data.section === "body" && data.column.index > 0) {
+            data.cell.styles.halign = "center";
+            const mKey = CAPTI_MEASURES[data.column.index - 1]?.key;
+            if (mKey) {
+              const rec = capti[data.row.index];
+              const color = getCaptiStatusColor(rec?.[mKey]);
+              if (color) {
+                data.cell.styles.fillColor = color;
+                data.cell.styles.textColor = COLORS.white;
+              }
+            }
+          }
+        },
+        theme: "grid",
+      });
+
+      y = doc.lastAutoTable.finalY + 12;
     }
   }
 
@@ -528,6 +626,115 @@ export function generateClassroomReport(classInfo, students, grade, period, year
   }
 
   doc.text("* = mClass composite (Acadience composite unavailable)", lx + 10, legendY);
+
+  // Footer
+  doc.setFontSize(7);
+  doc.setTextColor(148, 163, 184);
+  doc.text(
+    "Acadience Reading Tracker — Baymonte Christian School — Confidential",
+    pageWidth / 2, doc.internal.pageSize.getHeight() - 15,
+    { align: "center" }
+  );
+
+  return doc;
+}
+
+// ---------------------------------------------------------------------------
+// Capti ReadBasix Classroom Snapshot PDF (Grades 5+)
+// ---------------------------------------------------------------------------
+export function generateCaptiClassroomReport(classInfo, students, grade, period, year) {
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 30;
+  let y = margin;
+
+  // Header
+  doc.setFontSize(14);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Classroom Benchmark Report — Capti ReadBasix", margin, y);
+  y += 18;
+
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.subheader);
+  doc.text(
+    `${year}  ·  ${period}  ·  ${GRADE_LABELS[grade] || "Grade " + grade}  ·  ${classInfo.teacher || ""} (${classInfo.class_id})`,
+    margin, y
+  );
+  doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin, y, { align: "right" });
+  y += 5;
+
+  // Build table
+  const head = [["Student", ...CAPTI_MEASURES.map((m) => m.label)]];
+  const body = students.map(({ student, score }) => {
+    const name = `${student.last_name}, ${student.first_name}`;
+    return [
+      name,
+      ...CAPTI_MEASURES.map((m) => {
+        if (!score) return "\u2014";
+        return formatScore(score[m.key]);
+      }),
+    ];
+  });
+
+  autoTable(doc, {
+    startY: y + 10,
+    head,
+    body,
+    margin: { left: margin, right: margin },
+    styles: {
+      fontSize: 8,
+      cellPadding: 3,
+      lineColor: [226, 232, 240],
+      lineWidth: 0.5,
+    },
+    headStyles: {
+      fillColor: COLORS.lightGray,
+      textColor: COLORS.subheader,
+      fontStyle: "bold",
+      halign: "center",
+      fontSize: 8,
+    },
+    columnStyles: {
+      0: { halign: "left", cellWidth: 120 },
+    },
+    didParseCell: (data) => {
+      if (data.section === "body" && data.column.index > 0) {
+        data.cell.styles.halign = "center";
+
+        const mKey = CAPTI_MEASURES[data.column.index - 1]?.key;
+        const studentData = students[data.row.index];
+        const score = studentData?.score;
+        if (score && mKey) {
+          const color = getCaptiStatusColor(score[mKey]);
+          if (color) {
+            data.cell.styles.fillColor = color;
+            data.cell.styles.textColor = COLORS.white;
+          }
+        }
+      }
+    },
+    theme: "grid",
+  });
+
+  y = doc.lastAutoTable.finalY + 15;
+
+  // Legend
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  const legendY = y + 5;
+  const legends = [
+    { label: "Strong (265+)", color: COLORS.above },
+    { label: "High Average (250-264)", color: COLORS.at },
+    { label: "Low Average (236-249)", color: COLORS.below },
+    { label: "Weak (190-235)", color: COLORS.wellBelow },
+  ];
+  let lx = margin;
+  for (const { label, color } of legends) {
+    doc.setFillColor(...color);
+    doc.rect(lx, legendY - 6, 8, 8, "F");
+    doc.text(label, lx + 12, legendY);
+    lx += doc.getTextWidth(label) + 24;
+  }
 
   // Footer
   doc.setFontSize(7);

@@ -7,6 +7,7 @@ import {
   getDiagnostics,
   addDiagnostic,
   getIowaScores,
+  getCaptiScores,
   searchStudents,
   submitScore,
   isSheetsMode,
@@ -455,67 +456,162 @@ function DiagnosticsTab({ studentId }) {
 }
 
 // ---------------------------------------------------------------------------
-// Benchmarks Tab (original view)
+// Capti ReadBasix helpers
 // ---------------------------------------------------------------------------
-function BenchmarksTab({ student, history }) {
-  // Group history by school year
+const CAPTI_MEASURES = [
+  { key: "word_recognition", label: "Word Recog." },
+  { key: "vocabulary", label: "Vocabulary" },
+  { key: "morphology", label: "Morphology" },
+  { key: "sentence_processing", label: "Sent. Processing" },
+  { key: "reading_efficiency", label: "Reading Eff." },
+  { key: "reading_comprehension", label: "Reading Comp." },
+  { key: "lexile", label: "Lexile" },
+];
+
+function getCaptiColor(score) {
+  if (score == null || score === "") return null;
+  const n = typeof score === "number" ? score : Number(score);
+  if (isNaN(n)) return null;
+  if (n >= 265) return "#1D9E75";
+  if (n >= 250) return "#1D9E75";
+  if (n >= 236) return "#EF9F27";
+  return "#D85A30";
+}
+
+function CaptiScoreCell({ value }) {
+  if (value == null || value === "") {
+    return <td className="score-cell" style={{ color: "#cbd5e1" }}>--</td>;
+  }
+  const color = getCaptiColor(value);
+  const bg = color ? color + "22" : "transparent";
+  const border = color ? color + "44" : "transparent";
+  return (
+    <td
+      className="score-cell"
+      style={{
+        backgroundColor: bg,
+        borderLeft: `3px solid ${border}`,
+        color: color || "#64748b",
+      }}
+    >
+      {value}
+    </td>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Benchmarks Tab (original view) — reverse chronological + Capti
+// ---------------------------------------------------------------------------
+function BenchmarksTab({ student, history, studentId }) {
+  const captiScores = getCaptiScores(studentId);
+
+  // Group Acadience history by school year
   const byYear = {};
   for (const row of history) {
-    if (!byYear[row.school_year]) byYear[row.school_year] = [];
-    byYear[row.school_year].push(row);
+    if (!byYear[row.school_year]) byYear[row.school_year] = { acadience: [], capti: [] };
+    byYear[row.school_year].acadience.push(row);
   }
+
+  // Interleave Capti scores by year
+  for (const rec of captiScores) {
+    if (!byYear[rec.school_year]) byYear[rec.school_year] = { acadience: [], capti: [] };
+    byYear[rec.school_year].capti.push(rec);
+  }
+
+  // Reverse chronological order
+  const sortedYears = Object.keys(byYear).sort().reverse();
 
   return (
     <div>
-      {Object.keys(byYear).length === 0 && (
+      {sortedYears.length === 0 && (
         <div className="no-data">No benchmark score history found.</div>
       )}
 
-      {Object.entries(byYear).map(([yr, rows]) => {
-        const grade = rows[0].grade;
-        const allMeasures = new Set();
-        for (const row of rows) {
-          const ms = getMeasuresForGradePeriod(row.grade, row.period);
-          if (ms) ms.forEach((m) => allMeasures.add(m));
-        }
-        const measures = [...allMeasures];
+      {sortedYears.map((yr) => {
+        const { acadience: rows, capti } = byYear[yr];
+        const grade = rows[0]?.grade || capti[0]?.grade || "";
 
         return (
           <div key={yr} className="year-section">
-            <h3>
-              {yr} -- Grade {grade}
-            </h3>
-            <div style={{ overflowX: "auto" }}>
-              <table className="score-table">
-                <thead>
-                  <tr>
-                    <th style={{ minWidth: 80 }}>Period</th>
-                    {measures.map((m) => (
-                      <th key={m} className="measure-col">
-                        {MEASURE_LABELS[m] || m}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.period}>
-                      <td style={{ fontWeight: 600 }}>{row.period}</td>
-                      {measures.map((m) => (
-                        <ScoreCell
-                          key={m}
-                          grade={row.grade}
-                          period={row.period}
-                          measure={m}
-                          scoreValue={row[m]}
-                          scoreRow={row}
-                        />
+            {/* Acadience scores */}
+            {rows.length > 0 && (() => {
+              const allMeasures = new Set();
+              for (const row of rows) {
+                const ms = getMeasuresForGradePeriod(row.grade, row.period);
+                if (ms) ms.forEach((m) => allMeasures.add(m));
+              }
+              const measures = [...allMeasures];
+
+              return (
+                <>
+                  <h3>
+                    {yr} -- Grade {grade}
+                  </h3>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="score-table">
+                      <thead>
+                        <tr>
+                          <th style={{ minWidth: 80 }}>Period</th>
+                          {measures.map((m) => (
+                            <th key={m} className="measure-col">
+                              {MEASURE_LABELS[m] || m}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map((row) => (
+                          <tr key={row.period}>
+                            <td style={{ fontWeight: 600 }}>{row.period}</td>
+                            {measures.map((m) => (
+                              <ScoreCell
+                                key={m}
+                                grade={row.grade}
+                                period={row.period}
+                                measure={m}
+                                scoreValue={row[m]}
+                                scoreRow={row}
+                              />
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              );
+            })()}
+
+            {/* Capti ReadBasix scores */}
+            {capti.length > 0 && (
+              <>
+                <h3 style={rows.length > 0 ? { marginTop: 16 } : {}}>
+                  {yr} — Grade {capti[0].grade} (Capti ReadBasix)
+                </h3>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="score-table">
+                    <thead>
+                      <tr>
+                        <th style={{ minWidth: 80 }}>Period</th>
+                        {CAPTI_MEASURES.map((m) => (
+                          <th key={m.key} className="measure-col">{m.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {capti.map((rec) => (
+                        <tr key={rec.period}>
+                          <td style={{ fontWeight: 600 }}>{rec.period}</td>
+                          {CAPTI_MEASURES.map((m) => (
+                            <CaptiScoreCell key={m.key} value={rec[m.key]} />
+                          ))}
+                        </tr>
                       ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
           </div>
         );
       })}
@@ -628,6 +724,7 @@ export default function StudentProfile() {
   const student = studentId ? getStudent(studentId) : null;
   const history = studentId ? getStudentHistory(studentId) : [];
   const iowaScores = studentId ? getIowaScores(studentId) : [];
+  const captiScores = studentId ? getCaptiScores(studentId) : [];
   const results = searchStudents(query);
 
   // Determine current grade from most recent history
@@ -711,7 +808,7 @@ export default function StudentProfile() {
                 className="btn-primary"
                 onClick={() => {
                   const pmScores = getStudentPMScores(studentId);
-                  const doc = generateStudentReport(student, history, pmScores);
+                  const doc = generateStudentReport(student, history, pmScores, captiScores);
                   doc.save(`${student.last_name}_${student.first_name}_reading_report.pdf`);
                 }}
               >
@@ -740,7 +837,7 @@ export default function StudentProfile() {
 
           {/* Tab content */}
           {activeTab === "benchmarks" && (
-            <BenchmarksTab student={student} history={history} />
+            <BenchmarksTab student={student} history={history} studentId={studentId} />
           )}
           {activeTab === "pm" && (
             <PMTab studentId={studentId} />
