@@ -641,7 +641,7 @@ function IowaTab({ studentId }) {
   const [, setTick] = useState(0);
   useEffect(() => subscribe(() => setTick((t) => t + 1)), []);
 
-  const scores = getIowaScores(studentId);
+  const scores = getIowaScores(studentId).slice().reverse();
 
   if (scores.length === 0) {
     return (

@@ -212,6 +212,10 @@ export function getPeriodsForYear(schoolYear) {
   const periods = new Set(
     _scores.filter((s) => s.school_year === schoolYear).map((s) => s.period)
   );
+  // Also include periods from Capti data
+  for (const c of _capti) {
+    if (c.school_year === schoolYear && c.period) periods.add(c.period);
+  }
   const order = ["BOY", "MOY", "EOY"];
   return order.filter((p) => periods.has(p));
 }
