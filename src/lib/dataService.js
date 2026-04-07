@@ -23,6 +23,7 @@ let _students = [...importData.students];
 let _enrollment = [...importData.enrollment];
 let _scores = [...importData.scores];
 let _diagnostics = [];
+let _iowa = [];
 let _sheetsMode = false; // true when live-connected to Google Sheets
 let _loading = false;
 
@@ -110,6 +111,22 @@ export async function loadFromSheets() {
       notes: row.notes || "",
     }));
 
+    // Parse Iowa scores
+    const iowaNumeric = [
+      "reading_npr", "language_npr", "vocabulary_npr", "ela_total_npr",
+      "word_analysis_npr", "listening_npr", "extended_ela_npr",
+      "written_expression_npr", "conventions_npr",
+    ];
+    _iowa = (tabs.Iowa || []).map((row) => {
+      const rec = { ...row };
+      for (const field of iowaNumeric) {
+        const v = rec[field];
+        if (v === "" || v == null) rec[field] = null;
+        else { const n = Number(v); rec[field] = isNaN(n) ? null : n; }
+      }
+      return rec;
+    });
+
     _sheetsMode = true;
     _rebuildIndex();
 
@@ -142,6 +159,7 @@ onAuthChange((signedIn) => {
     _enrollment = [...importData.enrollment];
     _scores = [...importData.scores];
     _diagnostics = [];
+    _iowa = [];
     _sheetsMode = false;
     _rebuildIndex();
     _notify();
@@ -286,6 +304,15 @@ export function getDiagnostics(studentId) {
   return _diagnostics
     .filter((d) => d.student_id === studentId)
     .sort((a, b) => (b.assessment_date || "").localeCompare(a.assessment_date || ""));
+}
+
+/**
+ * Get Iowa Assessment scores for a student, sorted by school year.
+ */
+export function getIowaScores(studentId) {
+  return _iowa
+    .filter((r) => r.student_id === studentId)
+    .sort((a, b) => (a.school_year || "").localeCompare(b.school_year || ""));
 }
 
 /**

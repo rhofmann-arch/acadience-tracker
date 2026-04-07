@@ -6,6 +6,7 @@ import {
   getStudentPMScores,
   getDiagnostics,
   addDiagnostic,
+  getIowaScores,
   searchStudents,
   submitScore,
   isSheetsMode,
@@ -525,6 +526,98 @@ function BenchmarksTab({ student, history }) {
 // ---------------------------------------------------------------------------
 // Main StudentProfile Component
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Iowa Assessments Tab
+// ---------------------------------------------------------------------------
+const IOWA_ELA_FIELDS = [
+  { key: "reading", label: "Reading" },
+  { key: "language", label: "Language" },
+  { key: "written_expression", label: "Written Expression" },
+  { key: "conventions", label: "Conventions of Writing" },
+  { key: "vocabulary", label: "Vocabulary" },
+  { key: "ela_total", label: "ELA Total" },
+  { key: "word_analysis", label: "Word Analysis" },
+  { key: "listening", label: "Listening" },
+  { key: "extended_ela", label: "Extended ELA" },
+];
+
+function IowaTab({ studentId }) {
+  const [, setTick] = useState(0);
+  useEffect(() => subscribe(() => setTick((t) => t + 1)), []);
+
+  const scores = getIowaScores(studentId);
+
+  if (scores.length === 0) {
+    return (
+      <div className="no-data">
+        No Iowa Assessment scores on file for this student.
+      </div>
+    );
+  }
+
+  // Determine which fields have data across all years
+  const activeFields = IOWA_ELA_FIELDS.filter((f) =>
+    scores.some((s) => s[`${f.key}_npr`] != null || s[`${f.key}_ge`])
+  );
+
+  return (
+    <div>
+      <p style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>
+        Iowa Assessments — English Language Arts. NPR = National Percentile Rank, GE = Grade Equivalent.
+      </p>
+      {scores.map((s) => (
+        <div key={s.school_year} className="year-section">
+          <h3>
+            {s.school_year} — Grade {s.grade_tested} (tested {s.test_date})
+          </h3>
+          <div style={{ overflowX: "auto" }}>
+            <table className="score-table">
+              <thead>
+                <tr>
+                  <th style={{ minWidth: 60 }}></th>
+                  {activeFields.map((f) => (
+                    <th key={f.key} className="measure-col">{f.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style={{ fontWeight: 600, fontSize: 12, color: "#64748b" }}>NPR</td>
+                  {activeFields.map((f) => {
+                    const val = s[`${f.key}_npr`];
+                    const color = val != null
+                      ? val >= 75 ? "#1D9E75" : val >= 50 ? "#1D9E75" : val >= 25 ? "#EF9F27" : "#D85A30"
+                      : "#cbd5e1";
+                    const bg = val != null
+                      ? val >= 75 ? "#1D9E7522" : val >= 50 ? "transparent" : val >= 25 ? "#EF9F2722" : "#D85A3022"
+                      : "transparent";
+                    return (
+                      <td key={f.key} className="score-cell" style={{ color, backgroundColor: bg }}>
+                        {val != null ? val : "—"}
+                      </td>
+                    );
+                  })}
+                </tr>
+                <tr>
+                  <td style={{ fontWeight: 600, fontSize: 12, color: "#64748b" }}>GE</td>
+                  {activeFields.map((f) => {
+                    const val = s[`${f.key}_ge`];
+                    return (
+                      <td key={f.key} className="score-cell" style={{ color: "#475569" }}>
+                        {val || "—"}
+                      </td>
+                    );
+                  })}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function StudentProfile() {
   const { studentId } = useParams();
   const navigate = useNavigate();
@@ -534,7 +627,13 @@ export default function StudentProfile() {
 
   const student = studentId ? getStudent(studentId) : null;
   const history = studentId ? getStudentHistory(studentId) : [];
+  const iowaScores = studentId ? getIowaScores(studentId) : [];
   const results = searchStudents(query);
+
+  // Determine current grade from most recent history
+  const currentGrade = history.length > 0 ? history[history.length - 1].grade : null;
+  const gradeNum = currentGrade === "K" ? 0 : parseInt(currentGrade) || 0;
+  const showIowa = gradeNum >= 3 || iowaScores.length > 0;
 
   // Reset tab when student changes
   useEffect(() => {
@@ -632,6 +731,11 @@ export default function StudentProfile() {
             <button style={TAB_STYLE("diagnostics")} onClick={() => setActiveTab("diagnostics")}>
               Diagnostics
             </button>
+            {showIowa && (
+              <button style={TAB_STYLE("iowa")} onClick={() => setActiveTab("iowa")}>
+                Iowa Assessments
+              </button>
+            )}
           </div>
 
           {/* Tab content */}
@@ -643,6 +747,9 @@ export default function StudentProfile() {
           )}
           {activeTab === "diagnostics" && (
             <DiagnosticsTab studentId={studentId} />
+          )}
+          {activeTab === "iowa" && (
+            <IowaTab studentId={studentId} />
           )}
         </div>
       )}
