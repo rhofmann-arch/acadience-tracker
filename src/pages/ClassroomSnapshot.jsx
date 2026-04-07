@@ -322,7 +322,7 @@ export default function ClassroomSnapshot() {
         <select value={classId} onChange={(e) => setClassId(e.target.value)}>
           {classes.map((c) => (
             <option key={c.class_id} value={c.class_id}>
-              Grade {c.grade} — {c.teacher} ({c.class_id})
+              {c.class_id}{c.teacher ? ` — ${c.teacher}` : ""}
             </option>
           ))}
         </select>

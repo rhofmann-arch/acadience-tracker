@@ -233,6 +233,7 @@ export function getClassesForYear(schoolYear) {
   const classes = new Map();
   for (const e of _enrollment) {
     if (e.school_year !== schoolYear) continue;
+    if (!e.class_id && !e.teacher) continue; // skip empty placeholders
     const key = e.class_id || `${e.grade}-${e.teacher}`;
     if (!classes.has(key)) {
       classes.set(key, {
