@@ -162,7 +162,7 @@ function getRecommendations(grade, period, scoreRow) {
 // ---------------------------------------------------------------------------
 // Student Longitudinal Report
 // ---------------------------------------------------------------------------
-export function generateStudentReport(student, history) {
+export function generateStudentReport(student, history, pmScores) {
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 40;
@@ -305,6 +305,79 @@ export function generateStudentReport(student, history) {
         y += lines.length * 10 + 2;
       }
       y += 8;
+    }
+  }
+
+  // --- Progress Monitoring section ---
+  if (pmScores && pmScores.length > 0) {
+    if (y > 600) {
+      doc.addPage();
+      y = margin;
+    }
+
+    // Section header
+    doc.setFontSize(12);
+    doc.setTextColor(...COLORS.header);
+    doc.text("Progress Monitoring", margin, y);
+    y += 6;
+
+    doc.setDrawColor(239, 159, 39); // orange accent line
+    doc.setLineWidth(2);
+    doc.line(margin, y, margin + 120, y);
+    y += 12;
+
+    // Determine which measures have PM data
+    const pmMeasureKeys = [
+      "composite", "fsf", "lnf", "psf", "nwf_cls", "nwf_wwr",
+      "orf_words", "orf_accuracy", "retell", "retell_quality", "maze",
+    ];
+    const pmMeasures = pmMeasureKeys.filter((m) =>
+      pmScores.some((s) => s[m] != null && s[m] !== "")
+    );
+
+    if (pmMeasures.length > 0) {
+      const pmHead = [["Date", "Grade", ...pmMeasures.map((m) => MEASURE_LABELS[m] || m)]];
+      const pmBody = pmScores.map((row) => [
+        row.assessment_date || "",
+        row.grade || "",
+        ...pmMeasures.map((m) => formatScore(row[m])),
+      ]);
+
+      autoTable(doc, {
+        startY: y,
+        head: pmHead,
+        body: pmBody,
+        margin: { left: margin, right: margin },
+        styles: {
+          fontSize: 8,
+          cellPadding: 3,
+          lineColor: [226, 232, 240],
+          lineWidth: 0.5,
+        },
+        headStyles: {
+          fillColor: [255, 243, 224], // light orange background
+          textColor: [146, 64, 14],   // dark orange text
+          fontStyle: "bold",
+          halign: "center",
+        },
+        columnStyles: {
+          0: { halign: "left", fontStyle: "bold" },
+          1: { halign: "center" },
+        },
+        didParseCell: (data) => {
+          if (data.section === "body" && data.column.index > 1) {
+            data.cell.styles.halign = "center";
+          }
+        },
+        theme: "grid",
+      });
+
+      y = doc.lastAutoTable.finalY + 8;
+
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.text("Progress monitoring scores are shown without benchmark status coloring.", margin, y);
+      y += 12;
     }
   }
 

@@ -167,7 +167,7 @@ export async function readTab(tabName) {
  * limits with batchGet on large tabs (Scores has 2000+ rows).
  */
 export async function readAllTabs() {
-  const tabs = ["Students", "Enrollment", "Scores", "BenchmarkRef"];
+  const tabs = ["Students", "Enrollment", "Scores", "BenchmarkRef", "Diagnostics"];
   const result = {};
 
   for (const tabName of tabs) {

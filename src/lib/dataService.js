@@ -22,6 +22,7 @@ import { calculateComposite } from "./scoringEngine";
 let _students = [...importData.students];
 let _enrollment = [...importData.enrollment];
 let _scores = [...importData.scores];
+let _diagnostics = [];
 let _sheetsMode = false; // true when live-connected to Google Sheets
 let _loading = false;
 
@@ -99,6 +100,16 @@ export async function loadFromSheets() {
       return score;
     });
 
+    // Parse Diagnostics
+    _diagnostics = (tabs.Diagnostics || []).map((row) => ({
+      student_id: row.student_id || "",
+      test_name: row.test_name || "",
+      assessor: row.assessor || "",
+      assessment_date: row.assessment_date || "",
+      findings: row.findings || "",
+      notes: row.notes || "",
+    }));
+
     _sheetsMode = true;
     _rebuildIndex();
 
@@ -130,6 +141,7 @@ onAuthChange((signedIn) => {
     _students = [...importData.students];
     _enrollment = [...importData.enrollment];
     _scores = [...importData.scores];
+    _diagnostics = [];
     _sheetsMode = false;
     _rebuildIndex();
     _notify();
@@ -209,7 +221,8 @@ export function getClassScores(schoolYear, classId, period) {
         (s) =>
           s.student_id === enrollment.student_id &&
           s.school_year === schoolYear &&
-          s.period === period
+          s.period === period &&
+          s.assessment_type !== "progress_monitoring"
       );
       return { student, enrollment, score: score || null };
     })
@@ -237,7 +250,8 @@ export function getClassGrowthData(schoolYear, classId) {
           (s) =>
             s.student_id === enrollment.student_id &&
             s.school_year === schoolYear &&
-            s.period === period
+            s.period === period &&
+            s.assessment_type !== "progress_monitoring"
         ) || null;
       }
       return { student, scores };
@@ -247,7 +261,7 @@ export function getClassGrowthData(schoolYear, classId) {
 
 export function getStudentHistory(studentId) {
   return _scores
-    .filter((s) => s.student_id === studentId)
+    .filter((s) => s.student_id === studentId && s.assessment_type !== "progress_monitoring")
     .sort((a, b) => {
       if (a.school_year !== b.school_year)
         return a.school_year.localeCompare(b.school_year);
@@ -256,10 +270,56 @@ export function getStudentHistory(studentId) {
     });
 }
 
+/**
+ * Get progress monitoring scores for a student, sorted by date.
+ */
+export function getStudentPMScores(studentId) {
+  return _scores
+    .filter((s) => s.student_id === studentId && s.assessment_type === "progress_monitoring")
+    .sort((a, b) => (a.assessment_date || "").localeCompare(b.assessment_date || ""));
+}
+
+/**
+ * Get diagnostic records for a student, sorted by date.
+ */
+export function getDiagnostics(studentId) {
+  return _diagnostics
+    .filter((d) => d.student_id === studentId)
+    .sort((a, b) => (b.assessment_date || "").localeCompare(a.assessment_date || ""));
+}
+
+/**
+ * Add a diagnostic record for a student.
+ */
+export async function addDiagnostic(data) {
+  const record = {
+    student_id: data.student_id || "",
+    test_name: data.test_name || "",
+    assessor: data.assessor || "",
+    assessment_date: data.assessment_date || "",
+    findings: data.findings || "",
+    notes: data.notes || "",
+  };
+
+  _diagnostics.push(record);
+  _notify();
+
+  if (_sheetsMode) {
+    try {
+      await appendRows("Diagnostics", [record]);
+    } catch (err) {
+      console.error("Failed to write diagnostic to Sheets:", err);
+      throw err;
+    }
+  }
+
+  return record;
+}
+
 export function getSchoolWideScores(schoolYear, period) {
   const byGrade = {};
   const gradeScores = _scores.filter(
-    (s) => s.school_year === schoolYear && s.period === period
+    (s) => s.school_year === schoolYear && s.period === period && s.assessment_type !== "progress_monitoring"
   );
   for (const score of gradeScores) {
     if (!byGrade[score.grade]) byGrade[score.grade] = [];
@@ -552,6 +612,7 @@ export async function submitScore(scoreData) {
     ...scoreData,
     composite: composite != null ? composite : "",
     data_source: scoreData.data_source || "Acadience",
+    assessment_type: scoreData.assessment_type || "benchmark",
   };
 
   // Add to local state
@@ -576,7 +637,7 @@ export async function submitScore(scoreData) {
 // ---------------------------------------------------------------------------
 
 export function exportData() {
-  return { students: _students, enrollment: _enrollment, scores: _scores };
+  return { students: _students, enrollment: _enrollment, scores: _scores, diagnostics: _diagnostics };
 }
 
 export function exportCsv(dataset) {
