@@ -205,6 +205,11 @@ export function getStudent(studentId) {
 
 export function getSchoolYears() {
   const years = new Set(_scores.map((s) => s.school_year));
+  // Include enrollment years too, so a new year's rosters are selectable
+  // before any scores have been entered for it.
+  for (const e of _enrollment) {
+    if (e.school_year) years.add(e.school_year);
+  }
   return [...years].sort().reverse();
 }
 
@@ -217,7 +222,13 @@ export function getPeriodsForYear(schoolYear) {
     if (c.school_year === schoolYear && c.period) periods.add(c.period);
   }
   const order = ["BOY", "MOY", "EOY"];
-  return order.filter((p) => periods.has(p));
+  const found = order.filter((p) => periods.has(p));
+  // A year with rosters but no scores yet (e.g. before BOY is entered) still
+  // needs all three periods selectable.
+  if (!found.length && _enrollment.some((e) => e.school_year === schoolYear)) {
+    return order;
+  }
+  return found;
 }
 
 export function getEnrollmentForYear(schoolYear) {
