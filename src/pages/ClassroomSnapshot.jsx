@@ -7,14 +7,24 @@ import {
   getClassScores,
   getClassGrowthData,
   getCaptiClassScores,
+  getStudentHistory,
+  getCaptiScores,
+  getIowaScores,
 } from "../lib/dataService";
-import { generateClassroomReport, generateCaptiClassroomReport, generateGrowthReport } from "../lib/pdfReports";
+import {
+  generateClassroomReport,
+  generateCaptiClassroomReport,
+  generateGrowthReport,
+  generateClassFluencyReports,
+  generateTeacherDashboard,
+} from "../lib/pdfReports";
 import {
   getBenchmarkStatus,
   getMeasuresForGradePeriod,
   mclassLevelToStatus,
   STATUS,
 } from "../lib/scoringEngine";
+import { getComprehensionSummary } from "../lib/comprehension";
 
 const MEASURE_LABELS = {
   composite: "Composite",
@@ -355,6 +365,41 @@ export default function ClassroomSnapshot() {
               Growth PDF
             </button>
           )}
+        </>)}
+
+        {data.length > 0 && (<>
+          <button
+            className="btn-primary"
+            style={{ background: "#0891b2" }}
+            onClick={() => {
+              const roster = data.map(({ student }) => ({
+                student,
+                history: getStudentHistory(student.student_id),
+                captiScores: getCaptiScores(student.student_id),
+                iowaScores: getIowaScores(student.student_id),
+              }));
+              const doc = generateClassFluencyReports(roster);
+              doc.save(`Fluency_Reports_${grade}_${classId}_${year}.pdf`);
+            }}
+          >
+            Print Reports for All Students
+          </button>
+          <button
+            className="btn-primary"
+            style={{ background: "#7c3aed" }}
+            onClick={() => {
+              const comprehensionRows = data.map(({ student }) => {
+                const history = getStudentHistory(student.student_id);
+                const captiScores = getCaptiScores(student.student_id);
+                const iowaScores = getIowaScores(student.student_id);
+                return { student, overall: getComprehensionSummary(history, captiScores, iowaScores).overall };
+              });
+              const doc = generateTeacherDashboard(selectedClass, grade, period, year, data, comprehensionRows);
+              doc.save(`Teacher_Dashboard_${grade}_${classId}_${period}_${year}.pdf`);
+            }}
+          >
+            Teacher Dashboard
+          </button>
         </>)}
       </div>
 

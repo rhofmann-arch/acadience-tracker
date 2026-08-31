@@ -6,6 +6,8 @@
  *   2. Classroom Snapshot — printable class roster with scores
  *   3. Classroom Growth Report — BOY/MOY/EOY composite and ORF side by side
  *   4. Fluency Growth Report — one student's fluency chart + comprehension summary
+ *      (also available for a whole class, one page per student)
+ *   5. Teacher Dashboard — whole-class fluency & comprehension risk tables
  */
 
 import jsPDF from "jspdf";
@@ -13,7 +15,10 @@ import autoTable from "jspdf-autotable";
 import {
   getBenchmarkStatus,
   getMeasuresForGradePeriod,
+  getThresholds,
   mclassLevelToStatus,
+  benchmarkStatusToRiskLabel,
+  RISK_LABEL,
   STATUS,
 } from "./scoringEngine";
 import { ON_TRACK_TRAJECTORY, ON_TRACK_START, ON_TRACK_END, GRADE_EOY_GOAL, getActualScores } from "./trajectory";
@@ -1106,12 +1111,12 @@ function drawFluencyChart(doc, rect, points, actual) {
 }
 
 /**
- * Fluency Growth Report — one student's fluency chart (on-track goal vs.
- * actual ORF score) plus a snapshot of their most recent comprehension
- * scores and the overall weighted comprehension indicator below it.
+ * Draw one student's Fluency Growth Report onto the doc's *current* page —
+ * chart, comprehension summary table, overall indicator, footer. Shared by
+ * the single-student report and the whole-class "one page per student"
+ * report so both always render identically.
  */
-export function generateFluencyReport(student, history, captiScores, iowaScores) {
-  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+function drawFluencyReportPage(doc, student, history, captiScores, iowaScores) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 40;
   let y = margin;
@@ -1267,6 +1272,251 @@ export function generateFluencyReport(student, history, captiScores, iowaScores)
   );
   doc.text(weightLine, margin, y);
   y += weightLine.length * 10;
+
+  // Footer (current page only — callers looping over many students add a
+  // new page per student, so a full-page-range footer loop would redraw
+  // every prior page's footer again on each iteration)
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  doc.text(
+    "Acadience Reading Tracker — Baymonte Christian School — Confidential",
+    pageWidth / 2, doc.internal.pageSize.getHeight() - 20,
+    { align: "center" }
+  );
+}
+
+/**
+ * Fluency Growth Report — one student's fluency chart (on-track goal vs.
+ * actual ORF score) plus a snapshot of their most recent comprehension
+ * scores and the overall weighted comprehension indicator below it.
+ */
+export function generateFluencyReport(student, history, captiScores, iowaScores) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+  drawFluencyReportPage(doc, student, history, captiScores, iowaScores);
+  return doc;
+}
+
+/**
+ * Same Fluency Growth Report as generateFluencyReport, but one page per
+ * student for an entire class — a single print job covering the whole
+ * roster instead of downloading each student separately.
+ *
+ * @param {Array<{ student, history, captiScores, iowaScores }>} roster
+ */
+export function generateClassFluencyReports(roster) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+  roster.forEach((r, i) => {
+    if (i > 0) doc.addPage();
+    drawFluencyReportPage(doc, r.student, r.history, r.captiScores, r.iowaScores);
+  });
+  return doc;
+}
+
+// ---------------------------------------------------------------------------
+// Teacher Dashboard
+// ---------------------------------------------------------------------------
+
+function studentName(student) {
+  return `${student.last_name}, ${student.first_name}`;
+}
+
+/** "Well Below <34   ·   Below 34–49   ·   At 50–70   ·   Above 71+" from a
+ * getThresholds() {above, at, risk} triple. */
+function formatBenchmarkRanges(ref) {
+  const parts = [];
+  if (ref.risk != null) {
+    parts.push(`Well Below < ${ref.risk}`);
+    const belowUpper = (ref.at ?? ref.risk + 1) - 1;
+    parts.push(`Below ${ref.risk}–${belowUpper}`);
+  } else if (ref.at != null) {
+    parts.push(`Below < ${ref.at}`);
+  }
+  if (ref.at != null) {
+    const atUpper = ref.above != null ? ref.above - 1 : null;
+    parts.push(`At ${ref.at}${atUpper != null ? `–${atUpper}` : "+"}`);
+  }
+  if (ref.above != null) {
+    parts.push(`Above ${ref.above}+`);
+  }
+  return parts.join("   ·   ");
+}
+
+/**
+ * Sort a { label -> [line, ...] } bucket set into the four RISK_LABEL tiers
+ * and draw them as a single-row, four-column table: High Risk | Some Risk |
+ * On Track | Advanced. Each cell lists one line per student (newline-
+ * separated); an empty tier shows "—". Returns the y position below the
+ * table.
+ */
+function drawRiskBucketTable(doc, startY, margin, pageWidth, buckets) {
+  const head = [["High Risk", "Some Risk", "On Track", "Advanced"]];
+  const cols = [buckets.highRisk, buckets.someRisk, buckets.onTrack, buckets.advanced];
+  const body = [cols.map((lines) => (lines.length > 0 ? lines.join("\n") : "—"))];
+  const headColors = [COLORS.wellBelow, COLORS.below, COLORS.at, COLORS.above];
+
+  autoTable(doc, {
+    startY,
+    head,
+    body,
+    margin: { left: margin, right: margin },
+    styles: { fontSize: 9, cellPadding: 6, lineColor: [226, 232, 240], lineWidth: 0.5, valign: "top" },
+    headStyles: { fontStyle: "bold", halign: "center", textColor: COLORS.white, fontSize: 9 },
+    columnStyles: { 0: { cellWidth: (pageWidth - margin * 2) / 4 } },
+    didParseCell: (data) => {
+      if (data.section === "head") {
+        data.cell.styles.fillColor = headColors[data.column.index];
+      }
+      if (data.section === "body" && cols[data.column.index].length === 0) {
+        data.cell.styles.textColor = [203, 213, 225];
+        data.cell.styles.halign = "center";
+      }
+    },
+    theme: "grid",
+  });
+
+  return doc.lastAutoTable.finalY;
+}
+
+function pushToRiskBucket(buckets, risk, line) {
+  if (!risk) return false;
+  if (risk.label === RISK_LABEL.AT_HIGH_RISK.label) buckets.highRisk.push(line);
+  else if (risk.label === RISK_LABEL.AT_SOME_RISK.label) buckets.someRisk.push(line);
+  else if (risk.label === RISK_LABEL.ON_TRACK.label) buckets.onTrack.push(line);
+  else if (risk.label === RISK_LABEL.ADVANCED.label) buckets.advanced.push(line);
+  else return false;
+  return true;
+}
+
+/**
+ * Teacher Dashboard — a whole class sorted into risk tiers, two ways:
+ *
+ *   1. Fluency: each student's ORF Words Correct for the selected
+ *      reporting period, bucketed by that period's Acadience benchmark,
+ *      with the benchmark's cut scores printed above for reference.
+ *   2. Comprehension: each student's Overall Comprehension Indicator
+ *      (the same weighted composite as the Comprehension Tracker/Fluency
+ *      Growth Report) — names only, since it's a blend of several
+ *      differently-scaled measures rather than one score.
+ *
+ * @param {object} classInfo - { class_id, teacher, grade }
+ * @param {string} grade
+ * @param {string} period - "BOY" | "MOY" | "EOY"
+ * @param {string} year - school year, e.g. "2025-2026"
+ * @param {Array<{ student, score }>} fluencyRows - getClassScores() for this period
+ * @param {Array<{ student, overall }>} comprehensionRows - each student's current overall indicator
+ */
+export function generateTeacherDashboard(classInfo, grade, period, year, fluencyRows, comprehensionRows) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 40;
+  let y = margin;
+
+  // --- Header ---
+  doc.setFontSize(18);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Teacher Dashboard", margin, y);
+  y += 22;
+
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.subheader);
+  doc.text("Baymonte Christian School", margin, y);
+  doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin, y, { align: "right" });
+  y += 18;
+
+  doc.setFontSize(12);
+  doc.setTextColor(...COLORS.header);
+  doc.text(
+    `${year}  ·  ${period}  ·  ${GRADE_LABELS[grade] || "Grade " + grade}  ·  ${classInfo.teacher || ""} (${classInfo.class_id || ""})`,
+    margin, y
+  );
+  y += 16;
+
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(1);
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 20;
+
+  // --- Fluency ---
+  doc.setFontSize(13);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Fluency — Oral Reading Fluency (Words Correct)", margin, y);
+  y += 16;
+
+  const orfRef = getThresholds(grade, period, "orf_words");
+  if (!orfRef) {
+    doc.setFontSize(9);
+    doc.setTextColor(...COLORS.subheader);
+    doc.text(`Oral Reading Fluency isn't assessed at ${GRADE_LABELS[grade] || "Grade " + grade} ${period}.`, margin, y);
+    y += 20;
+  } else {
+    doc.setFontSize(9);
+    doc.setTextColor(...COLORS.subheader);
+    doc.text(`Benchmark for ${GRADE_LABELS[grade] || "Grade " + grade} ${period}:  ${formatBenchmarkRanges(orfRef)}`, margin, y);
+    y += 16;
+
+    const fBuckets = { highRisk: [], someRisk: [], onTrack: [], advanced: [] };
+    const fNoScore = [];
+    for (const { student, score } of fluencyRows) {
+      const val = score?.orf_words;
+      if (val == null) {
+        fNoScore.push(studentName(student));
+        continue;
+      }
+      const status = getScoreStatus(grade, period, "orf_words", val, score);
+      const risk = benchmarkStatusToRiskLabel(status);
+      const line = `${studentName(student)} — ${formatScore(val)}`;
+      if (!pushToRiskBucket(fBuckets, risk, line)) fNoScore.push(studentName(student));
+    }
+
+    y = drawRiskBucketTable(doc, y, margin, pageWidth, fBuckets) + 10;
+
+    if (fNoScore.length > 0) {
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      const lines = doc.splitTextToSize(`No ORF score this period: ${fNoScore.join("; ")}`, pageWidth - margin * 2);
+      doc.text(lines, margin, y);
+      y += lines.length * 10 + 10;
+    }
+  }
+
+  // --- Comprehension ---
+  if (y > 560) {
+    doc.addPage();
+    y = margin;
+  } else {
+    y += 10;
+  }
+
+  doc.setFontSize(13);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Comprehension — Overall Indicator", margin, y);
+  y += 14;
+
+  doc.setFontSize(8);
+  doc.setTextColor(...COLORS.subheader);
+  const compCaption = doc.splitTextToSize(
+    "Weighted blend of each student's most recent Iowa, Capti, Maze, and Retell Quality scores (Iowa and Capti " +
+    "only from Grade 5 up) — not tied to this reporting period, and not an Acadience composite.",
+    pageWidth - margin * 2
+  );
+  doc.text(compCaption, margin, y);
+  y += compCaption.length * 10 + 8;
+
+  const cBuckets = { highRisk: [], someRisk: [], onTrack: [], advanced: [] };
+  const cNoData = [];
+  for (const { student, overall } of comprehensionRows) {
+    if (!pushToRiskBucket(cBuckets, overall, studentName(student))) cNoData.push(studentName(student));
+  }
+
+  y = drawRiskBucketTable(doc, y, margin, pageWidth, cBuckets) + 10;
+
+  if (cNoData.length > 0) {
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    const lines = doc.splitTextToSize(`Not enough comprehension data yet: ${cNoData.join("; ")}`, pageWidth - margin * 2);
+    doc.text(lines, margin, y);
+    y += lines.length * 10;
+  }
 
   // Footer
   const pageCount = doc.getNumberOfPages();
