@@ -91,11 +91,11 @@ export const SUBTEST_INFO = {
     name: "Retell Quality of Response",
     abbrev: "Retell Quality",
     timing: "N/A — scored after retell",
-    scoreUnit: "1, 2, or 3",
+    scoreUnit: "1, 2, 3, or 4",
     directions:
-      "Rate the quality of the retell: 1 = limited/off-topic, 2 = adequate, 3 = detailed with main ideas and supporting details.",
-    tips: "Score 1–3 only. This is a judgment call based on the overall retell, not a word count.",
-    validRange: [1, 3],
+      "Rate the quality of the retell: 1 = 2 or fewer details, 2 = 3 or more details, 3 = 3 or more details in a meaningful sequence, 4 = 3 or more details in a meaningful sequence that captures a main idea.",
+    tips: "Score 1–4 only. This is a judgment call based on the overall retell, not a word count.",
+    validRange: [1, 4],
   },
   maze: {
     name: "Maze",

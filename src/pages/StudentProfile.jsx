@@ -20,6 +20,8 @@ import {
 } from "../lib/scoringEngine";
 import { validateScore } from "../lib/assessmentConfig";
 import { generateStudentReport } from "../lib/pdfReports";
+import FluencyTrajectoryChart from "../components/FluencyTrajectoryChart";
+import ComprehensionTracker from "../components/ComprehensionTracker";
 
 const MEASURE_LABELS = {
   composite: "Composite",
@@ -822,6 +824,12 @@ export default function StudentProfile() {
             <button style={TAB_STYLE("benchmarks")} onClick={() => setActiveTab("benchmarks")}>
               Benchmarks
             </button>
+            <button style={TAB_STYLE("growth")} onClick={() => setActiveTab("growth")}>
+              Fluency Growth Chart
+            </button>
+            <button style={TAB_STYLE("comprehension")} onClick={() => setActiveTab("comprehension")}>
+              Comprehension Tracker
+            </button>
             <button style={TAB_STYLE("pm")} onClick={() => setActiveTab("pm")}>
               Progress Monitoring
             </button>
@@ -838,6 +846,10 @@ export default function StudentProfile() {
           {/* Tab content */}
           {activeTab === "benchmarks" && (
             <BenchmarksTab student={student} history={history} studentId={studentId} />
+          )}
+          {activeTab === "growth" && <FluencyTrajectoryChart />}
+          {activeTab === "comprehension" && (
+            <ComprehensionTracker history={history} captiScores={captiScores} />
           )}
           {activeTab === "pm" && (
             <PMTab studentId={studentId} />
