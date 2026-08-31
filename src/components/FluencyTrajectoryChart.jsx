@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ON_TRACK_TRAJECTORY, ON_TRACK_START, ON_TRACK_END, GRADE_EOY_GOAL } from "../lib/trajectory";
+import { ON_TRACK_TRAJECTORY, ON_TRACK_START, ON_TRACK_END, GRADE_EOY_GOAL, getActualScores } from "../lib/trajectory";
+import { generateFluencyReport } from "../lib/pdfReports";
 
 // ---------------------------------------------------------------------------
 // Layout constants (SVG viewBox units — the <svg> scales responsively)
@@ -21,26 +22,12 @@ function xFor(i, n) {
 }
 
 /**
- * Pull a student's actual ORF words-correct-per-minute score for each of the
- * 12 Grade 1 BOY -> Grade 4 EOY periods out of their score history. Periods
- * with no recorded score come back as null (not administered, or the
- * student hadn't reached that grade yet).
- */
-function getActualScores(points, history) {
-  return points.map((p) => {
-    const row = history.find((h) => String(h.grade) === p.grade && h.period === p.period);
-    const val = row?.orf_words;
-    return val == null || val === "" ? null : Number(val);
-  });
-}
-
-/**
  * Chart showing Baymonte's on-track ORF fluency trajectory — 15 cwpm at
  * Grade 1 BOY, holding flat over each summer, up to 100 cwpm at Grade 4 EOY —
  * with the student's actual ORF score overlaid as a solid line wherever
  * they have data for it.
  */
-export default function FluencyTrajectoryChart({ history }) {
+export default function FluencyTrajectoryChart({ student, history, captiScores, iowaScores }) {
   const [hoverIndex, setHoverIndex] = useState(null);
   const points = ON_TRACK_TRAJECTORY;
   const n = points.length;
@@ -86,7 +73,22 @@ export default function FluencyTrajectoryChart({ history }) {
 
   return (
     <div className="panel">
-      <h3>Fluency Growth Chart</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+        <h3>Fluency Growth Chart</h3>
+        {student && (
+          <button
+            type="button"
+            className="btn-small"
+            style={{ flexShrink: 0 }}
+            onClick={() => {
+              const doc = generateFluencyReport(student, history || [], captiScores, iowaScores);
+              doc.save(`${student.last_name}_${student.first_name}_fluency_report.pdf`);
+            }}
+          >
+            Download PDF
+          </button>
+        )}
+      </div>
       <p className="panel-desc">
         Baymonte's goal: every student reads {ON_TRACK_END.cwpm} correct words per minute (cwpm)
         by the end of Grade {ON_TRACK_END.grade}, starting from about {ON_TRACK_START.cwpm} cwpm at

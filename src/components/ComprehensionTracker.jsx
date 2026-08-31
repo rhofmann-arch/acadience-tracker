@@ -1,10 +1,9 @@
 import { useState } from "react";
 import {
-  getBenchmarkStatus,
-  benchmarkStatusToRiskLabel,
-  getCaptiRiskLabel,
-  getIowaRiskLabel,
-} from "../lib/scoringEngine";
+  COMPREHENSION_WEIGHTS,
+  getComprehensionPoints,
+  getOverallComprehensionIndicator,
+} from "../lib/comprehension";
 
 // ---------------------------------------------------------------------------
 // Layout constants (SVG viewBox units — each <svg> scales responsively)
@@ -234,49 +233,90 @@ function MiniLineChart({ title, description, points, domain, valueLabel }) {
  * rated Advanced / On Track / At Some Risk / At High Risk.
  */
 export default function ComprehensionTracker({ history, captiScores, iowaScores }) {
-  const retellPoints = history
-    .filter((r) => r.retell_quality != null && r.retell_quality !== "")
-    .map((r) => {
-      const value = Number(r.retell_quality);
-      return {
-        label: `G${r.grade} ${r.period}`,
-        value,
-        risk: benchmarkStatusToRiskLabel(getBenchmarkStatus(r.grade, r.period, "retell_quality", value)),
-      };
-    })
-    .filter((p) => !isNaN(p.value));
+  const { retell: retellPoints, maze: mazePoints, capti: captiPoints, iowa: iowaPoints } =
+    getComprehensionPoints(history, captiScores, iowaScores);
 
-  const mazePoints = history
-    .filter((r) => r.maze != null && r.maze !== "")
-    .map((r) => {
-      const value = Number(r.maze);
-      return {
-        label: `G${r.grade} ${r.period}`,
-        value,
-        risk: benchmarkStatusToRiskLabel(getBenchmarkStatus(r.grade, r.period, "maze", value)),
-      };
-    })
-    .filter((p) => !isNaN(p.value));
+  const overall = getOverallComprehensionIndicator({
+    iowa: iowaPoints[iowaPoints.length - 1]?.risk,
+    capti: captiPoints[captiPoints.length - 1]?.risk,
+    maze: mazePoints[mazePoints.length - 1]?.risk,
+    retell: retellPoints[retellPoints.length - 1]?.risk,
+  });
 
-  const captiPoints = (captiScores || [])
-    .filter((r) => r.reading_comprehension != null && r.reading_comprehension !== "")
-    .map((r) => {
-      const value = Number(r.reading_comprehension);
-      return { label: `G${r.grade} ${r.period}`, value, risk: getCaptiRiskLabel(value) };
-    })
-    .filter((p) => !isNaN(p.value));
-
-  const iowaPoints = (iowaScores || [])
-    .filter((r) => r.reading_npr != null && r.reading_npr !== "")
-    .map((r) => {
-      const value = Number(r.reading_npr);
-      const springYear = (r.school_year || "").split("-")[1]?.slice(-2);
-      return { label: `G${r.grade_tested} '${springYear || "?"}`, value, risk: getIowaRiskLabel(value) };
-    })
-    .filter((p) => !isNaN(p.value));
+  const breakdown = [
+    { key: "iowa", name: "Iowa", points: iowaPoints },
+    { key: "capti", name: "Capti", points: captiPoints },
+    { key: "maze", name: "Maze", points: mazePoints },
+    { key: "retell", name: "Retell", points: retellPoints },
+  ];
 
   return (
     <div>
+      <div className="panel">
+        <h3 style={{ marginBottom: 4 }}>Overall Comprehension</h3>
+        <p className="panel-desc" style={{ marginBottom: 14 }}>
+          A weighted blend of whichever comprehension measures this student has on file — Iowa
+          and Capti count most, Maze next, and Retell Quality lightest, since it's a single
+          rater's judgment call rather than a scored task. A measure with no data yet is left
+          out and the rest reweighted. This isn't an Acadience score — just a quick read on the
+          overall comprehension picture.
+        </p>
+
+        {overall ? (
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 17,
+              fontWeight: 700,
+              color: overall.color,
+              background: overall.color + "18",
+              border: `1px solid ${overall.color}55`,
+              borderRadius: 10,
+              padding: "8px 16px",
+              marginBottom: 14,
+            }}
+          >
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: overall.color, flexShrink: 0 }} />
+            {overall.label}
+          </div>
+        ) : (
+          <div className="no-data" style={{ padding: 16, marginBottom: 14 }}>
+            Not enough comprehension data yet for an overall indicator.
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {breakdown.map((b) => {
+            const latest = b.points[b.points.length - 1];
+            return (
+              <div
+                key={b.key}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 12,
+                  padding: "5px 10px",
+                  borderRadius: 6,
+                  background: "#f8fafc",
+                  border: "1px solid #e2e8f0",
+                }}
+              >
+                <span style={{ fontWeight: 600, color: "#334155" }}>{b.name}</span>
+                <span style={{ color: "#94a3b8" }}>({Math.round(COMPREHENSION_WEIGHTS[b.key] * 100)}%)</span>
+                {latest?.risk ? (
+                  <span style={{ color: latest.risk.color, fontWeight: 600 }}>{latest.risk.label}</span>
+                ) : (
+                  <span style={{ color: "#cbd5e1" }}>no data</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <p className="panel-desc" style={{ marginBottom: 12 }}>
         Comprehension is measured a few different ways depending on grade and tool — Retell
         Quality of Response, Maze, Capti ReadBasix Reading Comprehension, and the Iowa

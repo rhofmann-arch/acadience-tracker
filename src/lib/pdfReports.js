@@ -5,6 +5,7 @@
  *   1. Student Longitudinal Report — one page per student
  *   2. Classroom Snapshot — printable class roster with scores
  *   3. Classroom Growth Report — BOY/MOY/EOY composite and ORF side by side
+ *   4. Fluency Growth Report — one student's fluency chart + comprehension summary
  */
 
 import jsPDF from "jspdf";
@@ -15,6 +16,8 @@ import {
   mclassLevelToStatus,
   STATUS,
 } from "./scoringEngine";
+import { ON_TRACK_TRAJECTORY, ON_TRACK_START, ON_TRACK_END, GRADE_EOY_GOAL, getActualScores } from "./trajectory";
+import { getComprehensionSummary, COMPREHENSION_WEIGHTS } from "./comprehension";
 
 // ---------------------------------------------------------------------------
 // Colors and constants
@@ -28,7 +31,20 @@ const COLORS = {
   subheader: [71, 85, 105],  // #475569
   lightGray: [241, 245, 249],
   white: [255, 255, 255],
+  goalLine: [100, 116, 139],   // #64748b — slate, the fluency goal line
+  actualLine: [37, 99, 235],   // #2563eb — blue, a student's actual score
+  gridline: [226, 232, 240],   // #e2e8f0
+  tickText: [148, 163, 184],   // #94a3b8
+  summerFill: [253, 246, 227], // pale amber wash
+  summerInk: [179, 118, 15],   // #b3760f
 };
+
+/** "#rrggbb" -> [r, g, b] (0-255 each), for colors that arrive as hex strings
+ * (e.g. from scoringEngine's RISK_LABEL) rather than the COLORS table above. */
+function hexToRgb(hex) {
+  const h = hex.replace("#", "");
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
 
 const MEASURE_LABELS = {
   composite: "Composite",
@@ -967,6 +983,291 @@ export function generateGrowthReport(classInfo, studentsWithScores, grade, year)
   if (hasOrf) {
     doc.addPage();
     buildPage("ORF Growth", "orf_words", "Oral Reading Fluency (Words Correct)");
+  }
+
+  return doc;
+}
+
+// ---------------------------------------------------------------------------
+// Fluency Growth Report
+// ---------------------------------------------------------------------------
+
+/**
+ * Draw the fluency growth chart (on-track goal line + summer bands +
+ * student's actual score) into a jsPDF doc within the given rect. Mirrors
+ * FluencyTrajectoryChart.jsx so the PDF and the on-screen chart always
+ * agree on shape and values.
+ */
+function drawFluencyChart(doc, rect, points, actual) {
+  const { x, y, width, height } = rect;
+  const pad = { top: 20, right: 60, bottom: 22, left: 30 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const n = points.length;
+
+  const yMax = Math.max(110, ...actual.filter((v) => v != null).map((v) => Math.ceil((v + 10) / 10) * 10));
+  const xFor = (i) => x + pad.left + (i / (n - 1)) * plotW;
+  const yFor = (v) => y + pad.top + (1 - v / yMax) * plotH;
+
+  // Summer bands
+  doc.setFillColor(...COLORS.summerFill);
+  points.forEach((p, i) => {
+    if (!p.isSummerStart) return;
+    doc.rect(xFor(i - 1), y + pad.top, xFor(i) - xFor(i - 1), plotH, "F");
+  });
+  doc.setFontSize(6.5);
+  doc.setTextColor(...COLORS.summerInk);
+  points.forEach((p, i) => {
+    if (!p.isSummerStart) return;
+    doc.text("SUMMER", (xFor(i - 1) + xFor(i)) / 2, y + pad.top - 5, { align: "center" });
+  });
+
+  // Gridlines + y-axis ticks
+  doc.setDrawColor(...COLORS.gridline);
+  doc.setLineWidth(0.5);
+  doc.setFontSize(7);
+  [0, 20, 40, 60, 80, 100].forEach((t) => {
+    doc.line(x + pad.left, yFor(t), x + width - pad.right, yFor(t));
+    doc.setTextColor(...COLORS.tickText);
+    doc.text(String(t), x + pad.left - 4, yFor(t), { align: "right", baseline: "middle" });
+  });
+
+  // X-axis labels
+  doc.setFontSize(6);
+  doc.setTextColor(...COLORS.tickText);
+  points.forEach((p, i) => {
+    doc.text(p.label, xFor(i), y + height - pad.bottom + 9, { align: "center" });
+  });
+
+  // Goal line — dashed
+  doc.setDrawColor(...COLORS.goalLine);
+  doc.setLineWidth(1.3);
+  doc.setLineDashPattern([2.5, 2], 0);
+  for (let i = 1; i < n; i++) {
+    doc.line(xFor(i - 1), yFor(points[i - 1].goalCwpm), xFor(i), yFor(points[i].goalCwpm));
+  }
+  doc.setLineDashPattern([], 0);
+
+  // Actual-score line — solid, broken across real gaps in the data
+  doc.setDrawColor(...COLORS.actualLine);
+  doc.setLineWidth(1.6);
+  let prevIdx = null;
+  actual.forEach((v, i) => {
+    if (v == null) return;
+    if (prevIdx != null && i === prevIdx + 1) {
+      doc.line(xFor(prevIdx), yFor(actual[prevIdx]), xFor(i), yFor(v));
+    }
+    prevIdx = i;
+  });
+
+  // Dots
+  points.forEach((p, i) => {
+    doc.setFillColor(...COLORS.goalLine);
+    doc.circle(xFor(i), yFor(p.goalCwpm), 1.6, "F");
+    if (actual[i] != null) {
+      doc.setFillColor(...COLORS.actualLine);
+      doc.circle(xFor(i), yFor(actual[i]), 2, "F");
+    }
+  });
+
+  // End labels
+  doc.setFontSize(8);
+  doc.setFont(undefined, "bold");
+  doc.setTextColor(...COLORS.subheader);
+  doc.text(`Goal: ${Math.round(points[n - 1].goalCwpm)}`, x + width - pad.right + 4, yFor(points[n - 1].goalCwpm) - 2);
+  const lastActualIdx = (() => {
+    for (let i = actual.length - 1; i >= 0; i--) if (actual[i] != null) return i;
+    return -1;
+  })();
+  if (lastActualIdx === n - 1) {
+    doc.setTextColor(...COLORS.actualLine);
+    doc.text(`${Math.round(actual[lastActualIdx])} cwpm`, x + width - pad.right + 4, yFor(actual[lastActualIdx]) + 10);
+  }
+  doc.setFont(undefined, "normal");
+
+  // Legend
+  const legendY = y + height + 12;
+  doc.setLineDashPattern([2, 1.5], 0);
+  doc.setDrawColor(...COLORS.goalLine);
+  doc.setLineWidth(1.3);
+  doc.line(x, legendY, x + 16, legendY);
+  doc.setLineDashPattern([], 0);
+  doc.setFontSize(8);
+  doc.setTextColor(...COLORS.subheader);
+  doc.text("On-track goal", x + 20, legendY, { baseline: "middle" });
+
+  const legend2X = x + 20 + doc.getTextWidth("On-track goal") + 16;
+  doc.setDrawColor(...COLORS.actualLine);
+  doc.setLineWidth(1.6);
+  doc.line(legend2X, legendY, legend2X + 16, legendY);
+  doc.text("Actual score", legend2X + 20, legendY, { baseline: "middle" });
+
+  return legendY + 10;
+}
+
+/**
+ * Fluency Growth Report — one student's fluency chart (on-track goal vs.
+ * actual ORF score) plus a snapshot of their most recent comprehension
+ * scores and the overall weighted comprehension indicator below it.
+ */
+export function generateFluencyReport(student, history, captiScores, iowaScores) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 40;
+  let y = margin;
+
+  // --- Header ---
+  doc.setFontSize(18);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Acadience Reading — Fluency Growth Report", margin, y);
+  y += 22;
+
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.subheader);
+  doc.text("Baymonte Christian School", margin, y);
+  doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin, y, { align: "right" });
+  y += 20;
+
+  doc.setFontSize(14);
+  doc.setTextColor(...COLORS.header);
+  doc.text(`${student.first_name} ${student.last_name}`, margin, y);
+  y += 16;
+
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.subheader);
+  const meta = [`ID: ${student.student_id}`];
+  if (student.dob) meta.push(`DOB: ${student.dob}`);
+  if (student.cohort_year) meta.push(`Cohort: ${student.cohort_year}`);
+  doc.text(meta.join("  ·  "), margin, y);
+  y += 16;
+
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(1);
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 18;
+
+  // --- Fluency chart ---
+  doc.setFontSize(12);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Fluency Growth Chart", margin, y);
+  y += 12;
+
+  doc.setFontSize(8);
+  doc.setTextColor(...COLORS.subheader);
+  const captionLines = doc.splitTextToSize(
+    `Baymonte's goal: every student reads ${ON_TRACK_END.cwpm} correct words per minute (cwpm) by ` +
+    `the end of Grade ${ON_TRACK_END.grade}, starting from about ${ON_TRACK_START.cwpm} cwpm at Grade 1 BOY — ` +
+    `with end-of-year targets of ${GRADE_EOY_GOAL[1]} (G1), ${GRADE_EOY_GOAL[2]} (G2), and ${GRADE_EOY_GOAL[3]} (G3) ` +
+    `along the way. The goal line holds flat across each summer. This is a planning target, not an Acadience benchmark cutoff.`,
+    pageWidth - margin * 2
+  );
+  doc.text(captionLines, margin, y);
+  y += captionLines.length * 10 + 10;
+
+  const chartHeight = 230;
+  const actual = getActualScores(ON_TRACK_TRAJECTORY, history || []);
+  y = drawFluencyChart(doc, { x: margin, y, width: pageWidth - margin * 2, height: chartHeight }, ON_TRACK_TRAJECTORY, actual);
+  y += 16;
+
+  // --- Comprehension summary ---
+  if (y > 620) {
+    doc.addPage();
+    y = margin;
+  }
+
+  doc.setFontSize(12);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Comprehension — Most Recent Scores", margin, y);
+  y += 6;
+
+  const summary = getComprehensionSummary(history || [], captiScores || [], iowaScores || []);
+
+  const compRows = [
+    ["Iowa Assessments — Reading", summary.iowa],
+    ["Capti ReadBasix — Reading Comprehension", summary.capti],
+    ["Maze", summary.maze],
+    ["Retell Quality of Response", summary.retell],
+  ].map(([label, point]) => [
+    label,
+    point ? point.label : "—",
+    point ? String(point.value) : "—",
+    point?.risk ? point.risk.label : "No data",
+  ]);
+
+  autoTable(doc, {
+    startY: y + 8,
+    head: [["Measure", "Most Recent Period", "Score", "Rating"]],
+    body: compRows,
+    margin: { left: margin, right: margin },
+    styles: { fontSize: 9, cellPadding: 4, lineColor: [226, 232, 240], lineWidth: 0.5 },
+    headStyles: { fillColor: COLORS.lightGray, textColor: COLORS.subheader, fontStyle: "bold", halign: "center" },
+    columnStyles: {
+      0: { halign: "left", fontStyle: "bold" },
+      1: { halign: "center" },
+      2: { halign: "center" },
+      3: { halign: "center", fontStyle: "bold" },
+    },
+    didParseCell: (data) => {
+      if (data.section === "body" && data.column.index === 3) {
+        const point = [summary.iowa, summary.capti, summary.maze, summary.retell][data.row.index];
+        if (point?.risk) {
+          data.cell.styles.textColor = hexToRgb(point.risk.color);
+        } else {
+          data.cell.styles.textColor = [148, 163, 184];
+        }
+      }
+    },
+    theme: "grid",
+  });
+
+  y = doc.lastAutoTable.finalY + 18;
+
+  // --- Overall indicator ---
+  doc.setFontSize(12);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Overall Comprehension Indicator", margin, y);
+  y += 14;
+
+  if (summary.overall) {
+    const badgeColor = hexToRgb(summary.overall.color);
+    doc.setFillColor(badgeColor[0], badgeColor[1], badgeColor[2]);
+    doc.roundedRect(margin, y - 12, 150, 24, 4, 4, "F");
+    doc.setFontSize(12);
+    doc.setFont(undefined, "bold");
+    doc.setTextColor(...COLORS.white);
+    doc.text(summary.overall.label, margin + 75, y + 1, { align: "center", baseline: "middle" });
+    doc.setFont(undefined, "normal");
+    y += 24;
+  } else {
+    doc.setFontSize(10);
+    doc.setTextColor(...COLORS.subheader);
+    doc.text("Not enough comprehension data yet for an overall indicator.", margin, y);
+    y += 14;
+  }
+
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  const weightLine = doc.splitTextToSize(
+    `Weighted blend of whichever measures are on file — Iowa (${Math.round(COMPREHENSION_WEIGHTS.iowa * 100)}%), ` +
+    `Capti (${Math.round(COMPREHENSION_WEIGHTS.capti * 100)}%), Maze (${Math.round(COMPREHENSION_WEIGHTS.maze * 100)}%), ` +
+    `Retell Quality (${Math.round(COMPREHENSION_WEIGHTS.retell * 100)}%) — with missing measures left out and the rest ` +
+    `reweighted. Not an Acadience composite.`,
+    pageWidth - margin * 2
+  );
+  doc.text(weightLine, margin, y);
+  y += weightLine.length * 10;
+
+  // Footer
+  const pageCount = doc.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      "Acadience Reading Tracker — Baymonte Christian School — Confidential",
+      pageWidth / 2, doc.internal.pageSize.getHeight() - 20,
+      { align: "center" }
+    );
   }
 
   return doc;

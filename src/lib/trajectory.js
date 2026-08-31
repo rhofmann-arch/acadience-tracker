@@ -63,3 +63,18 @@ export function getOnTrackTrajectory() {
 
 // Computed once — the trajectory anchors and shape never change at runtime.
 export const ON_TRACK_TRAJECTORY = getOnTrackTrajectory();
+
+/**
+ * Pull a student's actual ORF words-correct-per-minute score for each of the
+ * given trajectory points (grade/period pairs) out of their score history.
+ * Periods with no recorded score come back as null (not administered, or
+ * the student hadn't reached that grade yet). Shared by the on-screen chart
+ * and the PDF report so both plot the exact same values.
+ */
+export function getActualScores(points, history) {
+  return points.map((p) => {
+    const row = (history || []).find((h) => String(h.grade) === p.grade && h.period === p.period);
+    const val = row?.orf_words;
+    return val == null || val === "" ? null : Number(val);
+  });
+}
