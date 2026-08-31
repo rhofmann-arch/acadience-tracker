@@ -1,4 +1,10 @@
 import { useState } from "react";
+import {
+  getBenchmarkStatus,
+  benchmarkStatusToRiskLabel,
+  getCaptiRiskLabel,
+  getIowaRiskLabel,
+} from "../lib/scoringEngine";
 
 // ---------------------------------------------------------------------------
 // Layout constants (SVG viewBox units — each <svg> scales responsively)
@@ -9,7 +15,7 @@ const MARGIN = { top: 24, right: 46, bottom: 28, left: 34 };
 const PLOT_W = VIEW_W - MARGIN.left - MARGIN.right;
 const PLOT_H = VIEW_H - MARGIN.top - MARGIN.bottom;
 
-const DATA_COLOR = "#2563eb"; // blue — actual observed scores (vs. the fluency chart's dashed-gray goal line)
+const DATA_COLOR = "#2563eb"; // blue — fallback when a point has no risk-label rating
 
 /**
  * Pick a "nice" axis max + step for an auto-scaled y-axis (no fixed domain
@@ -37,9 +43,36 @@ function autoDomain(values) {
   return { min: 0, max: niceMax, ticks };
 }
 
+/** Small colored pill showing a risk label, e.g. "On Track". */
+function RiskBadge({ risk }) {
+  if (!risk) return null;
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 11.5,
+        fontWeight: 600,
+        color: risk.color,
+        background: risk.color + "1a",
+        border: `1px solid ${risk.color}44`,
+        borderRadius: 20,
+        padding: "3px 9px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: risk.color, flexShrink: 0 }} />
+      {risk.label}
+    </span>
+  );
+}
+
 /**
  * One measure's mini line chart: actual scores over the periods where the
  * student has data for that measure. No goal line — just what was observed.
+ * Each point is colored by its risk label (Advanced / On Track / At Some
+ * Risk / At High Risk) when one is available for that measure.
  */
 function MiniLineChart({ title, description, points, domain, valueLabel }) {
   const [hoverIndex, setHoverIndex] = useState(null);
@@ -67,10 +100,14 @@ function MiniLineChart({ title, description, points, domain, valueLabel }) {
   const hovered = hoverIndex != null ? points[hoverIndex] : null;
   const hoverX = hoverIndex != null ? xFor(hoverIndex) : 0;
   const hoverY = hoverIndex != null ? yFor(points[hoverIndex].value) : 0;
+  const latestRisk = points[n - 1].risk;
 
   return (
     <div className="panel">
-      <h3>{title}</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 6 }}>
+        <h3 style={{ margin: 0 }}>{title}</h3>
+        {latestRisk && <RiskBadge risk={latestRisk} />}
+      </div>
       <p className="panel-desc">{description}</p>
 
       <div style={{ position: "relative" }}>
@@ -90,7 +127,14 @@ function MiniLineChart({ title, description, points, domain, valueLabel }) {
           ))}
 
           {points.map((p, i) => (
-            <text key={p.label + i} x={xFor(i)} y={VIEW_H - MARGIN.bottom + 16} textAnchor="middle" fontSize={10} fill="#94a3b8">
+            <text
+              key={p.label + i}
+              x={xFor(i)}
+              y={VIEW_H - MARGIN.bottom + 16}
+              textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}
+              fontSize={10}
+              fill="#94a3b8"
+            >
               {p.label}
             </text>
           ))}
@@ -109,7 +153,7 @@ function MiniLineChart({ title, description, points, domain, valueLabel }) {
               key={p.label + i}
               tabIndex={0}
               role="img"
-              aria-label={`${p.label}: ${valueLabel(p.value)}`}
+              aria-label={`${p.label}: ${valueLabel(p.value)}${p.risk ? `, ${p.risk.label}` : ""}`}
               onMouseEnter={() => setHoverIndex(i)}
               onMouseLeave={() => setHoverIndex(null)}
               onFocus={() => setHoverIndex(i)}
@@ -117,7 +161,14 @@ function MiniLineChart({ title, description, points, domain, valueLabel }) {
               style={{ cursor: "pointer", outline: "none" }}
             >
               <circle cx={xFor(i)} cy={yFor(p.value)} r={12} fill="transparent" />
-              <circle cx={xFor(i)} cy={yFor(p.value)} r={hoverIndex === i ? 5 : 4} fill={DATA_COLOR} stroke="#fff" strokeWidth={2} />
+              <circle
+                cx={xFor(i)}
+                cy={yFor(p.value)}
+                r={hoverIndex === i ? 5 : 4}
+                fill={p.risk ? p.risk.color : DATA_COLOR}
+                stroke="#fff"
+                strokeWidth={2}
+              />
             </g>
           ))}
 
@@ -144,6 +195,7 @@ function MiniLineChart({ title, description, points, domain, valueLabel }) {
             }}
           >
             <div style={{ fontWeight: 700 }}>{valueLabel(hovered.value)}</div>
+            {hovered.risk && <div style={{ color: hovered.risk.color, fontWeight: 600 }}>{hovered.risk.label}</div>}
             <div style={{ color: "#cbd5e1" }}>{hovered.label}</div>
           </div>
         )}
@@ -158,6 +210,13 @@ function MiniLineChart({ title, description, points, domain, valueLabel }) {
             </thead>
             <tbody>
               <tr>{points.map((p, i) => <td key={p.label + i} className="score-cell">{valueLabel(p.value)}</td>)}</tr>
+              <tr>
+                {points.map((p, i) => (
+                  <td key={p.label + i} className="score-cell" style={{ fontSize: 11, color: p.risk ? p.risk.color : "#cbd5e1" }}>
+                    {p.risk ? p.risk.label : "—"}
+                  </td>
+                ))}
+              </tr>
             </tbody>
           </table>
         </div>
@@ -171,32 +230,59 @@ function MiniLineChart({ title, description, points, domain, valueLabel }) {
  * student has on file as its own small chart of actual scores over time.
  * There's no single universal comprehension metric the way ORF cwpm covers
  * fluency, and no schoolwide comprehension goal defined yet — so this is
- * "what was observed," plotted separately per measure, not one combined
- * chart with a target line.
+ * "what was observed," plotted separately per measure, with each score
+ * rated Advanced / On Track / At Some Risk / At High Risk.
  */
-export default function ComprehensionTracker({ history, captiScores }) {
+export default function ComprehensionTracker({ history, captiScores, iowaScores }) {
   const retellPoints = history
     .filter((r) => r.retell_quality != null && r.retell_quality !== "")
-    .map((r) => ({ label: `G${r.grade} ${r.period}`, value: Number(r.retell_quality) }))
+    .map((r) => {
+      const value = Number(r.retell_quality);
+      return {
+        label: `G${r.grade} ${r.period}`,
+        value,
+        risk: benchmarkStatusToRiskLabel(getBenchmarkStatus(r.grade, r.period, "retell_quality", value)),
+      };
+    })
     .filter((p) => !isNaN(p.value));
 
   const mazePoints = history
     .filter((r) => r.maze != null && r.maze !== "")
-    .map((r) => ({ label: `G${r.grade} ${r.period}`, value: Number(r.maze) }))
+    .map((r) => {
+      const value = Number(r.maze);
+      return {
+        label: `G${r.grade} ${r.period}`,
+        value,
+        risk: benchmarkStatusToRiskLabel(getBenchmarkStatus(r.grade, r.period, "maze", value)),
+      };
+    })
     .filter((p) => !isNaN(p.value));
 
   const captiPoints = (captiScores || [])
     .filter((r) => r.reading_comprehension != null && r.reading_comprehension !== "")
-    .map((r) => ({ label: `G${r.grade} ${r.period}`, value: Number(r.reading_comprehension) }))
+    .map((r) => {
+      const value = Number(r.reading_comprehension);
+      return { label: `G${r.grade} ${r.period}`, value, risk: getCaptiRiskLabel(value) };
+    })
+    .filter((p) => !isNaN(p.value));
+
+  const iowaPoints = (iowaScores || [])
+    .filter((r) => r.reading_npr != null && r.reading_npr !== "")
+    .map((r) => {
+      const value = Number(r.reading_npr);
+      const springYear = (r.school_year || "").split("-")[1]?.slice(-2);
+      return { label: `G${r.grade_tested} '${springYear || "?"}`, value, risk: getIowaRiskLabel(value) };
+    })
     .filter((p) => !isNaN(p.value));
 
   return (
     <div>
       <p className="panel-desc" style={{ marginBottom: 12 }}>
         Comprehension is measured a few different ways depending on grade and tool — Retell
-        Quality of Response, Maze, and Capti ReadBasix Reading Comprehension each use their own
-        scale, so they're tracked as separate charts rather than combined into one. These show
-        actual scores over time; there's no on-track goal line here yet.
+        Quality of Response, Maze, Capti ReadBasix Reading Comprehension, and the Iowa
+        Assessments Reading score each use their own scale, so they're tracked as separate
+        charts rather than combined into one. Each score is rated against that measure's own
+        benchmark: Advanced, On Track, At Some Risk, or At High Risk.
       </p>
 
       <MiniLineChart
@@ -219,6 +305,14 @@ export default function ComprehensionTracker({ history, captiScores }) {
         description="Scaled reading comprehension score from Capti ReadBasix (collected grades 5+)."
         points={captiPoints}
         valueLabel={(v) => `${v}`}
+      />
+
+      <MiniLineChart
+        title="Iowa Assessments — Reading"
+        description="Reading National Percentile Rank from the Iowa Assessments (collected grades 3+, once per year)."
+        points={iowaPoints}
+        domain={{ min: 0, max: 100, ticks: [0, 25, 50, 75, 100] }}
+        valueLabel={(v) => `${v} NPR`}
       />
     </div>
   );

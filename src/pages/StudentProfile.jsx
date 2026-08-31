@@ -847,9 +847,9 @@ export default function StudentProfile() {
           {activeTab === "benchmarks" && (
             <BenchmarksTab student={student} history={history} studentId={studentId} />
           )}
-          {activeTab === "growth" && <FluencyTrajectoryChart />}
+          {activeTab === "growth" && <FluencyTrajectoryChart history={history} />}
           {activeTab === "comprehension" && (
-            <ComprehensionTracker history={history} captiScores={captiScores} />
+            <ComprehensionTracker history={history} captiScores={captiScores} iowaScores={iowaScores} />
           )}
           {activeTab === "pm" && (
             <PMTab studentId={studentId} />

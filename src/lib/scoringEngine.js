@@ -219,6 +219,63 @@ export function getBenchmarkStatus(grade, period, measure, score) {
 }
 
 // ---------------------------------------------------------------------------
+// Risk labels — parent-friendly translation of benchmark status
+// ---------------------------------------------------------------------------
+export const RISK_LABEL = {
+  ADVANCED: { label: "Advanced", color: "#1D9E75" },
+  ON_TRACK: { label: "On Track", color: "#1D9E75" },
+  AT_SOME_RISK: { label: "At Some Risk", color: "#EF9F27" },
+  AT_HIGH_RISK: { label: "At High Risk", color: "#D85A30" },
+};
+
+const STATUS_TO_RISK_LABEL = {
+  [STATUS.ABOVE.status]: RISK_LABEL.ADVANCED,
+  [STATUS.AT.status]: RISK_LABEL.ON_TRACK,
+  [STATUS.BELOW.status]: RISK_LABEL.AT_SOME_RISK,
+  [STATUS.WELL_BELOW.status]: RISK_LABEL.AT_HIGH_RISK,
+};
+
+/**
+ * Translate a getBenchmarkStatus() result into a parent-friendly risk label:
+ * Advanced / On Track / At Some Risk / At High Risk.
+ */
+export function benchmarkStatusToRiskLabel(benchmarkStatus) {
+  if (!benchmarkStatus) return null;
+  return STATUS_TO_RISK_LABEL[benchmarkStatus.status] || null;
+}
+
+/**
+ * Risk label for a Capti ReadBasix Reading Comprehension scaled score.
+ * Same thresholds used to color Capti scores elsewhere in the app (PDF
+ * reports, classroom snapshot): >=265 Strong, >=250 High Average,
+ * >=236 Low Average, else Weak.
+ */
+export function getCaptiRiskLabel(score) {
+  if (score == null || score === "") return null;
+  const n = Number(score);
+  if (isNaN(n)) return null;
+  if (n >= 265) return RISK_LABEL.ADVANCED;
+  if (n >= 250) return RISK_LABEL.ON_TRACK;
+  if (n >= 236) return RISK_LABEL.AT_SOME_RISK;
+  return RISK_LABEL.AT_HIGH_RISK;
+}
+
+/**
+ * Risk label for an Iowa Assessments National Percentile Rank, using the
+ * same 75/50/25 breakpoints already used to color Iowa scores elsewhere
+ * (StudentProfile's Iowa Assessments tab).
+ */
+export function getIowaRiskLabel(npr) {
+  if (npr == null || npr === "") return null;
+  const n = Number(npr);
+  if (isNaN(n)) return null;
+  if (n >= 75) return RISK_LABEL.ADVANCED;
+  if (n >= 50) return RISK_LABEL.ON_TRACK;
+  if (n >= 25) return RISK_LABEL.AT_SOME_RISK;
+  return RISK_LABEL.AT_HIGH_RISK;
+}
+
+// ---------------------------------------------------------------------------
 // ORF Accuracy → Composite Point Value lookup tables
 // ---------------------------------------------------------------------------
 
