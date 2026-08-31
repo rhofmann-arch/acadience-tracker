@@ -20,10 +20,11 @@ import {
 
 /**
  * Relative weight each comprehension measure carries in the overall
- * indicator. Iowa and Capti are the strongest evidence — standardized,
- * norm-referenced comprehension measures. Maze is a real but coarser
- * check. Retell Quality is the lightest signal: a single rater's 1-4
- * judgment call on a retell, not a scored comprehension task.
+ * indicator, for Grade 4 and below. Iowa and Capti are the strongest
+ * evidence — standardized, norm-referenced comprehension measures. Maze is
+ * a real but coarser check. Retell Quality is the lightest signal: a
+ * single rater's 1-4 judgment call on a retell, not a scored comprehension
+ * task.
  */
 export const COMPREHENSION_WEIGHTS = {
   iowa: 0.35,
@@ -31,6 +32,51 @@ export const COMPREHENSION_WEIGHTS = {
   maze: 0.2,
   retell: 0.1,
 };
+
+/**
+ * From Grade 5 on, Maze and Retell Quality are dropped from the overall
+ * indicator entirely — Iowa and Capti are the school's primary
+ * comprehension measures for older students, regardless of whether a
+ * Maze/Retell score happens to be on file for that period.
+ */
+export const COMPREHENSION_WEIGHTS_UPPER = {
+  iowa: 0.5,
+  capti: 0.5,
+};
+
+const UPPER_GRADE_CUTOFF = 4; // grades > 4 use COMPREHENSION_WEIGHTS_UPPER
+
+function toGradeNum(grade) {
+  if (grade == null || grade === "") return null;
+  if (grade === "K") return 0;
+  const n = parseInt(grade, 10);
+  return isNaN(n) ? null : n;
+}
+
+/**
+ * The weight set to use for a given current grade — Grade 5+ drops Maze
+ * and Retell Quality from the overall indicator (see
+ * COMPREHENSION_WEIGHTS_UPPER above).
+ */
+export function getComprehensionWeights(gradeNum) {
+  return gradeNum != null && gradeNum > UPPER_GRADE_CUTOFF ? COMPREHENSION_WEIGHTS_UPPER : COMPREHENSION_WEIGHTS;
+}
+
+/**
+ * A student's current grade (as a number, K=0), taken as the highest grade
+ * seen across their most recent Acadience, Capti, and Iowa records — so a
+ * Grade 5+ student is recognized as such even from Capti/Iowa alone.
+ */
+export function getCurrentGradeNum(history, captiScores, iowaScores) {
+  const candidates = [
+    history?.[history.length - 1]?.grade,
+    captiScores?.[captiScores.length - 1]?.grade,
+    iowaScores?.[iowaScores.length - 1]?.grade_tested,
+  ]
+    .map(toGradeNum)
+    .filter((n) => n != null);
+  return candidates.length > 0 ? Math.max(...candidates) : null;
+}
 
 const RISK_SCORE = {
   [RISK_LABEL.ADVANCED.label]: 4,
@@ -48,16 +94,19 @@ const SCORE_TO_RISK = {
 
 /**
  * Combine each measure's current risk label into one overall comprehension
- * indicator, weighted by COMPREHENSION_WEIGHTS. A measure with no data is
- * simply left out and the remaining weights renormalized — so e.g. a
- * Grade 3 student with no Capti yet (Capti starts Grade 5) still gets an
- * overall from Iowa/Maze/Retell alone, instead of never getting one.
+ * indicator, weighted by grade (see getComprehensionWeights). A measure
+ * with no data — or one excluded for this grade — is simply left out and
+ * the remaining weights renormalized, so e.g. a Grade 3 student with no
+ * Capti yet (Capti starts Grade 5) still gets an overall from
+ * Iowa/Maze/Retell alone, instead of never getting one.
  *
  * @param {{ iowa?: {label,color}|null, capti?, maze?, retell? }} risks
+ * @param {number|null} [gradeNum] - current grade (K=0); Grade 5+ drops Maze/Retell
  * @returns {{ label: string, color: string, score: number } | null}
  */
-export function getOverallComprehensionIndicator(risks) {
-  const entries = Object.entries(COMPREHENSION_WEIGHTS)
+export function getOverallComprehensionIndicator(risks, gradeNum) {
+  const weights = getComprehensionWeights(gradeNum);
+  const entries = Object.entries(weights)
     .map(([key, weight]) => [weight, risks[key]])
     .filter(([, risk]) => risk != null);
 
@@ -141,10 +190,10 @@ export function getComprehensionPoints(history, captiScores, iowaScores) {
 /**
  * The most recent score (and its risk label) for each comprehension
  * measure, plus the overall weighted indicator across whichever measures
- * are available. Used by the Comprehension Tracker's summary card and the
- * Fluency Growth Report PDF.
+ * count for this student's grade. Used by the Comprehension Tracker's
+ * summary card and the Fluency Growth Report PDF.
  *
- * @returns {{ retell, maze, capti, iowa: object|null, overall: object|null }}
+ * @returns {{ retell, maze, capti, iowa: object|null, overall: object|null, gradeNum: number|null }}
  */
 export function getComprehensionSummary(history, captiScores, iowaScores) {
   const points = getComprehensionPoints(history, captiScores, iowaScores);
@@ -154,13 +203,12 @@ export function getComprehensionSummary(history, captiScores, iowaScores) {
   const maze = latest(points.maze);
   const capti = latest(points.capti);
   const iowa = latest(points.iowa);
+  const gradeNum = getCurrentGradeNum(history, captiScores, iowaScores);
 
-  const overall = getOverallComprehensionIndicator({
-    iowa: iowa?.risk,
-    capti: capti?.risk,
-    maze: maze?.risk,
-    retell: retell?.risk,
-  });
+  const overall = getOverallComprehensionIndicator(
+    { iowa: iowa?.risk, capti: capti?.risk, maze: maze?.risk, retell: retell?.risk },
+    gradeNum
+  );
 
-  return { retell, maze, capti, iowa, overall };
+  return { retell, maze, capti, iowa, overall, gradeNum };
 }

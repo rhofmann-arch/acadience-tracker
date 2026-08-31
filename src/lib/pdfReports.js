@@ -17,7 +17,7 @@ import {
   STATUS,
 } from "./scoringEngine";
 import { ON_TRACK_TRAJECTORY, ON_TRACK_START, ON_TRACK_END, GRADE_EOY_GOAL, getActualScores } from "./trajectory";
-import { getComprehensionSummary, COMPREHENSION_WEIGHTS } from "./comprehension";
+import { getComprehensionSummary, getComprehensionWeights } from "./comprehension";
 
 // ---------------------------------------------------------------------------
 // Colors and constants
@@ -1247,11 +1247,22 @@ export function generateFluencyReport(student, history, captiScores, iowaScores)
 
   doc.setFontSize(8);
   doc.setTextColor(148, 163, 184);
+  const activeWeights = getComprehensionWeights(summary.gradeNum);
+  const weightParts = [
+    ["Iowa", activeWeights.iowa],
+    ["Capti", activeWeights.capti],
+    ["Maze", activeWeights.maze],
+    ["Retell Quality", activeWeights.retell],
+  ]
+    .filter(([, w]) => w != null)
+    .map(([name, w]) => `${name} (${Math.round(w * 100)}%)`)
+    .join(", ");
+  const upperGradeNote = activeWeights.maze == null
+    ? " Maze and Retell Quality are dropped from the overall starting Grade 5."
+    : "";
   const weightLine = doc.splitTextToSize(
-    `Weighted blend of whichever measures are on file — Iowa (${Math.round(COMPREHENSION_WEIGHTS.iowa * 100)}%), ` +
-    `Capti (${Math.round(COMPREHENSION_WEIGHTS.capti * 100)}%), Maze (${Math.round(COMPREHENSION_WEIGHTS.maze * 100)}%), ` +
-    `Retell Quality (${Math.round(COMPREHENSION_WEIGHTS.retell * 100)}%) — with missing measures left out and the rest ` +
-    `reweighted. Not an Acadience composite.`,
+    `Weighted blend of whichever measures are on file — ${weightParts} — with missing measures ` +
+    `left out and the rest reweighted.${upperGradeNote} Not an Acadience composite.`,
     pageWidth - margin * 2
   );
   doc.text(weightLine, margin, y);

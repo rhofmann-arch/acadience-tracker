@@ -1,7 +1,8 @@
 import { useState } from "react";
 import {
-  COMPREHENSION_WEIGHTS,
   getComprehensionPoints,
+  getComprehensionWeights,
+  getCurrentGradeNum,
   getOverallComprehensionIndicator,
 } from "../lib/comprehension";
 
@@ -236,12 +237,18 @@ export default function ComprehensionTracker({ history, captiScores, iowaScores 
   const { retell: retellPoints, maze: mazePoints, capti: captiPoints, iowa: iowaPoints } =
     getComprehensionPoints(history, captiScores, iowaScores);
 
-  const overall = getOverallComprehensionIndicator({
-    iowa: iowaPoints[iowaPoints.length - 1]?.risk,
-    capti: captiPoints[captiPoints.length - 1]?.risk,
-    maze: mazePoints[mazePoints.length - 1]?.risk,
-    retell: retellPoints[retellPoints.length - 1]?.risk,
-  });
+  const gradeNum = getCurrentGradeNum(history, captiScores, iowaScores);
+  const weights = getComprehensionWeights(gradeNum);
+
+  const overall = getOverallComprehensionIndicator(
+    {
+      iowa: iowaPoints[iowaPoints.length - 1]?.risk,
+      capti: captiPoints[captiPoints.length - 1]?.risk,
+      maze: mazePoints[mazePoints.length - 1]?.risk,
+      retell: retellPoints[retellPoints.length - 1]?.risk,
+    },
+    gradeNum
+  );
 
   const breakdown = [
     { key: "iowa", name: "Iowa", points: iowaPoints },
@@ -257,9 +264,10 @@ export default function ComprehensionTracker({ history, captiScores, iowaScores 
         <p className="panel-desc" style={{ marginBottom: 14 }}>
           A weighted blend of whichever comprehension measures this student has on file — Iowa
           and Capti count most, Maze next, and Retell Quality lightest, since it's a single
-          rater's judgment call rather than a scored task. A measure with no data yet is left
-          out and the rest reweighted. This isn't an Acadience score — just a quick read on the
-          overall comprehension picture.
+          rater's judgment call rather than a scored task. From Grade 5 on, Maze and Retell
+          Quality drop out entirely and the overall is Iowa and Capti only. A measure with no
+          data yet is left out and the rest reweighted. This isn't an Acadience score — just a
+          quick read on the overall comprehension picture.
         </p>
 
         {overall ? (
@@ -290,6 +298,8 @@ export default function ComprehensionTracker({ history, captiScores, iowaScores 
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {breakdown.map((b) => {
             const latest = b.points[b.points.length - 1];
+            const weight = weights[b.key];
+            const excluded = weight == null;
             return (
               <div
                 key={b.key}
@@ -302,14 +312,21 @@ export default function ComprehensionTracker({ history, captiScores, iowaScores 
                   borderRadius: 6,
                   background: "#f8fafc",
                   border: "1px solid #e2e8f0",
+                  opacity: excluded ? 0.65 : 1,
                 }}
               >
                 <span style={{ fontWeight: 600, color: "#334155" }}>{b.name}</span>
-                <span style={{ color: "#94a3b8" }}>({Math.round(COMPREHENSION_WEIGHTS[b.key] * 100)}%)</span>
-                {latest?.risk ? (
-                  <span style={{ color: latest.risk.color, fontWeight: 600 }}>{latest.risk.label}</span>
+                {excluded ? (
+                  <span style={{ color: "#94a3b8", fontStyle: "italic" }}>excluded (Grade 5+)</span>
                 ) : (
-                  <span style={{ color: "#cbd5e1" }}>no data</span>
+                  <>
+                    <span style={{ color: "#94a3b8" }}>({Math.round(weight * 100)}%)</span>
+                    {latest?.risk ? (
+                      <span style={{ color: latest.risk.color, fontWeight: 600 }}>{latest.risk.label}</span>
+                    ) : (
+                      <span style={{ color: "#cbd5e1" }}>no data</span>
+                    )}
+                  </>
                 )}
               </div>
             );
