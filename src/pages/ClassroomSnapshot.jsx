@@ -11,6 +11,7 @@ import {
   getCaptiScores,
   getIowaScores,
   getGradeScores,
+  getStudentPMScores,
 } from "../lib/dataService";
 import {
   generateClassroomReport,
@@ -28,6 +29,7 @@ import {
   STATUS,
 } from "../lib/scoringEngine";
 import { getComprehensionSummary } from "../lib/comprehension";
+import { getLocalValuesByMeasure } from "../lib/grade1Report";
 
 const MEASURE_LABELS = {
   composite: "Composite",
@@ -411,8 +413,15 @@ export default function ClassroomSnapshot() {
             style={{ background: "#0f766e" }}
             onClick={() => {
               const gradeRows = getGradeScores(year, grade, period);
-              const localCompositeValues = gradeRows.map((r) => r.score?.composite).filter((v) => v != null);
-              const doc = generateClassGrade1Reports(grade, period, year, data, localCompositeValues);
+              const measures = (getMeasuresForGradePeriod(grade, period) || []).filter((m) => m !== "composite");
+              const localValuesByMeasure = getLocalValuesByMeasure(gradeRows, measures);
+              const roster = data.map(({ student, score }) => ({
+                student,
+                score,
+                history: getStudentHistory(student.student_id),
+                pmScores: getStudentPMScores(student.student_id),
+              }));
+              const doc = generateClassGrade1Reports(grade, period, year, roster, localValuesByMeasure);
               doc.save(`Grade1_Risk_Reports_${classId}_${period}_${year}.pdf`);
             }}
           >
@@ -423,7 +432,13 @@ export default function ClassroomSnapshot() {
             style={{ background: "#9d174d" }}
             onClick={() => {
               const gradeRows = getGradeScores(year, grade, period);
-              const doc = generateGrade1TeacherDashboard(selectedClass, grade, period, year, data, gradeRows);
+              const classRows = data.map(({ student, score }) => ({
+                student,
+                score,
+                history: getStudentHistory(student.student_id),
+                pmScores: getStudentPMScores(student.student_id),
+              }));
+              const doc = generateGrade1TeacherDashboard(selectedClass, grade, period, year, classRows, gradeRows);
               doc.save(`Grade1_Teacher_Dashboard_${classId}_${period}_${year}.pdf`);
             }}
           >

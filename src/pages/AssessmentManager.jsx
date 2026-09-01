@@ -423,8 +423,12 @@ export default function AssessmentManager() {
   }
 
   function handleStudentDone(completedId) {
-    // Auto-advance to next student could go here
-    setSelectedStudentId(null);
+    // This fires from a setTimeout ~500ms after submit. If the assessor has
+    // already clicked on to the next student in that window (the normal
+    // fast-moving workflow), this stale callback must not clear that new
+    // selection out from under them — only reset if they're still looking
+    // at the student who just completed.
+    setSelectedStudentId((current) => (current === completedId ? null : current));
   }
 
   if (!session) {

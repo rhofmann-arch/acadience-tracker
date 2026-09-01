@@ -22,12 +22,13 @@ import {
   benchmarkStatusToRiskLabel,
   RISK_LABEL,
   STATUS,
+  MEASURE_SCHEDULE,
 } from "./scoringEngine";
 import { ON_TRACK_TRAJECTORY, ON_TRACK_START, ON_TRACK_END, GRADE_EOY_GOAL, getActualScores } from "./trajectory";
 import { getComprehensionSummary, getComprehensionWeights } from "./comprehension";
 import {
   buildGrade1Assessment,
-  getRecommendationReasoning,
+  getLocalValuesByMeasure,
   ordinal,
 } from "./grade1Report";
 
@@ -1541,17 +1542,19 @@ export function generateTeacherDashboard(classInfo, grade, period, year, fluency
   return doc;
 }
 
+
 // ---------------------------------------------------------------------------
 // Grade 1 Reading Risk Report
 // ---------------------------------------------------------------------------
 
 /**
  * Draw one student's Grade 1 Reading Risk Report onto the doc's *current*
- * page — overall risk indicator, subtest-by-subtest breakdown with
- * plain-language notes on how each predicts later reading success, and an
- * intervention + progress-monitoring recommendation.
+ * page — composite (with a data-consistency check), subtest-by-subtest
+ * breakdown with plain-language notes on how each predicts later reading
+ * success, and a flag-driven recommendation (see grade1Report.js for the
+ * three-flag model this is built on).
  */
-function drawGrade1ReportPage(doc, student, grade, period, year, scoreRow, localCompositeValues) {
+function drawGrade1ReportPage(doc, student, grade, period, year, assessment) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const margin = 40;
   let y = margin;
@@ -1586,9 +1589,8 @@ function drawGrade1ReportPage(doc, student, grade, period, year, scoreRow, local
   doc.line(margin, y, pageWidth - margin, y);
   y += 20;
 
-  const assessment = buildGrade1Assessment(grade, period, scoreRow, localCompositeValues);
-
-  // --- Overall Risk Indicator ---
+  // --- Overall Risk Indicator (composite only — see Recommendation below
+  // for the fuller picture that also weighs subtests and local standing) ---
   doc.setFontSize(13);
   doc.setTextColor(...COLORS.header);
   doc.text("Overall Risk Indicator", margin, y);
@@ -1619,12 +1621,25 @@ function drawGrade1ReportPage(doc, student, grade, period, year, scoreRow, local
   y += 13;
 
   if (assessment.localPercentile != null) {
-    const n = (localCompositeValues || []).filter((v) => v != null).length;
     doc.text(
-      `Ranks in the ${ordinal(assessment.localPercentile)} percentile among this year's Grade 1 ${period} students at Baymonte (n=${n}).`,
+      `Ranks in the ${ordinal(assessment.localPercentile)} percentile among this year's Grade 1 ${period} students at Baymonte.`,
       margin, y
     );
     y += 13;
+  }
+
+  if (assessment.compositeMismatch) {
+    const { stored, expected, diff } = assessment.compositeMismatch;
+    doc.setTextColor(...COLORS.below);
+    const lines = doc.splitTextToSize(
+      `Data check: the recorded composite (${formatScore(stored)}) differs from what this app's formula would ` +
+      `calculate from the subtests below (${formatScore(expected)}, a difference of ${Math.abs(diff)}) — worth ` +
+      `double-checking the source data before treating the composite status above as final.`,
+      pageWidth - margin * 2
+    );
+    doc.text(lines, margin, y);
+    y += lines.length * 10 + 4;
+    doc.setTextColor(...COLORS.subheader);
   }
   y += 8;
 
@@ -1669,7 +1684,7 @@ function drawGrade1ReportPage(doc, student, grade, period, year, scoreRow, local
   }
 
   // --- Recommendation ---
-  if (y > 600) {
+  if (y > 580) {
     doc.addPage();
     y = margin;
   }
@@ -1681,24 +1696,25 @@ function drawGrade1ReportPage(doc, student, grade, period, year, scoreRow, local
   const rec = assessment.recommendation;
   const recColor = hexToRgb(rec.risk.color);
   doc.setFillColor(recColor[0], recColor[1], recColor[2]);
-  doc.roundedRect(margin, y - 12, 150, 24, 4, 4, "F");
+  const badgeWidth = Math.max(100, doc.getStringUnitWidth(rec.label) * 12 * 1.15 + 24);
+  doc.roundedRect(margin, y - 12, badgeWidth, 24, 4, 4, "F");
   doc.setFontSize(12);
   doc.setFont(undefined, "bold");
   doc.setTextColor(...COLORS.white);
-  doc.text(rec.level, margin + 75, y + 1, { align: "center", baseline: "middle" });
+  doc.text(rec.label, margin + badgeWidth / 2, y + 1, { align: "center", baseline: "middle" });
   doc.setFont(undefined, "normal");
 
   doc.setFontSize(10);
   doc.setTextColor(...COLORS.header);
   const freqText = rec.days > 0
     ? `${rec.days} day${rec.days === 1 ? "" : "s"}/week, 30 min, Orton-Gillingham`
-    : "No formal intervention recommended";
-  doc.text(freqText, margin + 160, y + 1, { baseline: "middle" });
+    : "No standing intervention yet";
+  doc.text(freqText, margin + badgeWidth + 14, y + 1, { baseline: "middle" });
   y += 26;
 
   doc.setFontSize(9);
   doc.setTextColor(...COLORS.subheader);
-  const reasonLines = doc.splitTextToSize(getRecommendationReasoning(assessment), pageWidth - margin * 2);
+  const reasonLines = doc.splitTextToSize(rec.reasoning, pageWidth - margin * 2);
   doc.text(reasonLines, margin, y);
   y += reasonLines.length * 11 + 10;
 
@@ -1708,7 +1724,7 @@ function drawGrade1ReportPage(doc, student, grade, period, year, scoreRow, local
   y += 12;
   doc.setFontSize(8.5);
   doc.setTextColor(...COLORS.subheader);
-  const pmLines = doc.splitTextToSize(assessment.pmPlan.text, pageWidth - margin * 2);
+  const pmLines = doc.splitTextToSize(rec.pmPlan.text, pageWidth - margin * 2);
   doc.text(pmLines, margin, y);
   y += pmLines.length * 10;
 
@@ -1730,12 +1746,14 @@ function drawGrade1ReportPage(doc, student, grade, period, year, scoreRow, local
  * @param {string} period - "BOY" | "MOY" | "EOY"
  * @param {string} year
  * @param {object|null} scoreRow - this student's score row for the period
- * @param {Array<number>} localCompositeValues - every Grade 1 student's
- *   composite score this year/period (whole school), for the percentile
+ * @param {Array<object>} history - this student's full Acadience history (later-period follow-up checks)
+ * @param {Array<object>} pmScores - this student's progress-monitoring records
+ * @param {object} localValuesByMeasure - getLocalValuesByMeasure() for this grade/period's whole-grade cohort
  */
-export function generateGrade1Report(student, grade, period, year, scoreRow, localCompositeValues) {
+export function generateGrade1Report(student, grade, period, year, scoreRow, history, pmScores, localValuesByMeasure) {
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
-  drawGrade1ReportPage(doc, student, grade, period, year, scoreRow, localCompositeValues);
+  const assessment = buildGrade1Assessment({ grade, period, scoreRow, history, pmScores, localValuesByMeasure });
+  drawGrade1ReportPage(doc, student, grade, period, year, assessment);
   return doc;
 }
 
@@ -1743,26 +1761,27 @@ export function generateGrade1Report(student, grade, period, year, scoreRow, loc
  * Same report as generateGrade1Report, one page per student, for an entire
  * class — a single print job for the whole homeroom.
  *
- * @param {Array<{ student, score }>} roster - e.g. getClassScores() rows
+ * @param {Array<{ student, score, history, pmScores }>} roster - per-student data, e.g. from getClassScores() plus getStudentHistory()/getStudentPMScores() for each
  */
-export function generateClassGrade1Reports(grade, period, year, roster, localCompositeValues) {
+export function generateClassGrade1Reports(grade, period, year, roster, localValuesByMeasure) {
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
-  roster.forEach(({ student, score }, i) => {
+  roster.forEach(({ student, score, history, pmScores }, i) => {
     if (i > 0) doc.addPage();
-    drawGrade1ReportPage(doc, student, grade, period, year, score, localCompositeValues);
+    const assessment = buildGrade1Assessment({ grade, period, scoreRow: score, history, pmScores, localValuesByMeasure });
+    drawGrade1ReportPage(doc, student, grade, period, year, assessment);
   });
   return doc;
 }
 
 /**
  * Grade 1 Teacher Dashboard — the homeroom sorted into the same four risk
- * tiers as generateTeacherDashboard, but driven by the Composite Score
- * (and each student's percentile within the whole Grade 1 cohort) rather
- * than ORF, since Grade 1 doesn't have fluency/comprehension measures the
- * way Grades 2+ do.
+ * tiers as generateTeacherDashboard, but driven by buildGrade1Assessment's
+ * three-flag model (low across the board / significant single-area deficit
+ * / borderline-locally) rather than ORF, since Grade 1 doesn't have
+ * fluency/comprehension measures the way Grades 2+ do.
  *
  * @param {object} classInfo - { class_id, teacher, grade }
- * @param {Array<{ student, score }>} classRows - this homeroom, e.g. getClassScores()
+ * @param {Array<{ student, score, history, pmScores }>} classRows - this homeroom, with each student's history/pmScores attached
  * @param {Array<{ student, score }>} gradeRows - whole Grade 1, e.g. getGradeScores() — the percentile peer group
  */
 export function generateGrade1TeacherDashboard(classInfo, grade, period, year, classRows, gradeRows) {
@@ -1808,22 +1827,22 @@ export function generateGrade1TeacherDashboard(classInfo, grade, period, year, c
     y += 16;
   }
 
-  const gradeCompositeValues = (gradeRows || []).map((r) => r.score?.composite).filter((v) => v != null);
+  const measures = MEASURE_SCHEDULE[grade]?.[period] || [];
+  const localValuesByMeasure = getLocalValuesByMeasure(gradeRows, measures);
 
   const buckets = { highRisk: [], someRisk: [], onTrack: [], advanced: [] };
   const noScore = [];
-  for (const { student, score } of classRows) {
+  for (const { student, score, history, pmScores } of classRows) {
     const composite = score?.composite;
     if (composite == null) {
       noScore.push(studentName(student));
       continue;
     }
     // Reuse the individual report's logic so the dashboard bucket always
-    // matches that student's Grade 1 Reading Risk Report — including the
-    // BOY worst-of-composite-and-ORF rule.
-    const assessment = buildGrade1Assessment(grade, period, score, gradeCompositeValues);
+    // matches that student's Grade 1 Reading Risk Report.
+    const assessment = buildGrade1Assessment({ grade, period, scoreRow: score, history, pmScores, localValuesByMeasure });
     const pct = assessment.localPercentile;
-    const line = `${studentName(student)} — ${formatScore(composite)}${pct != null ? ` (${ordinal(pct)} %ile)` : ""}`;
+    const line = `${studentName(student)} — ${formatScore(composite)}${pct != null ? ` (${ordinal(pct)} %ile)` : ""} — ${assessment.recommendation.label}`;
     if (!pushToRiskBucket(buckets, assessment.recommendation.risk, line)) noScore.push(studentName(student));
   }
 
@@ -1840,10 +1859,11 @@ export function generateGrade1TeacherDashboard(classInfo, grade, period, year, c
   doc.setFontSize(8);
   doc.setTextColor(148, 163, 184);
   const noteLines = doc.splitTextToSize(
-    "Buckets reflect the recommended intervention level (Strong = 4 days/week, Moderate = 2 days/week, Monitor/" +
-    "None = no formal intervention), which factors in both the national composite benchmark and how each student " +
-    "compares to this year's whole Grade 1 cohort at Baymonte — see each student's Grade 1 Reading Risk Report " +
-    "for the full breakdown and reasoning. Intervention model: Orton-Gillingham, 30 minutes per session.",
+    "Buckets reflect the recommended tier — Strong (4x/week), Confirmed or Retest Needed (a specific subtest, not " +
+    "the whole profile), Watch (borderline locally, monthly progress monitoring), or None — which weighs the " +
+    "composite, individual subtests, and how each student compares to this year's whole Grade 1 cohort at " +
+    "Baymonte. See each student's Grade 1 Reading Risk Report for the full breakdown and reasoning. Intervention " +
+    "model: Orton-Gillingham, 30 minutes per session.",
     pageWidth - margin * 2
   );
   doc.text(noteLines, margin, y);

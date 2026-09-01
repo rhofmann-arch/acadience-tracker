@@ -5,15 +5,42 @@
  * Grade 1 (and eventually Kindergarten EOY) doesn't have Oral Reading
  * Fluency or comprehension measures the way Grades 2+ do, so the general
  * Fluency Growth Report / Teacher Dashboard don't fit. This module builds
- * a report centered on the Acadience Composite Score instead: an overall
- * risk indicator, a subtest-by-subtest breakdown with plain-language notes
- * on how each one predicts later reading success, and an intervention +
- * progress-monitoring recommendation that factors in both the national
- * benchmark and how the student compares to their own grade this year.
+ * a report centered on the Acadience Composite Score and subtests instead.
+ *
+ * The recommendation is driven by three independent flags rather than the
+ * composite alone, since a single additive number can hide a mixed subtest
+ * profile (see checkCompositeMismatch) and can be pulled around by Letter
+ * Naming Fluency, which — despite being a real predictor (~r=.50, roughly
+ * 25% of variance in later reading) — Acadience itself doesn't benchmark
+ * and doesn't consider a powerful instructional target. LNF is shown on
+ * every report for context but never counts toward any flag below.
+ *
+ *   A. Low across the board — composite Well Below AND >=2 other
+ *      benchmarked subtests Below/Well Below. -> Strong (4x/week).
+ *   B. Significantly low in one remediable area — a single non-LNF
+ *      subtest Well Below on its own, composite notwithstanding. Two
+ *      stages: Retest Needed (no follow-up data yet) -> Confirmed (a
+ *      later benchmark or progress-monitoring score for that same
+ *      measure is also Well Below), which carries a skill-specific
+ *      intervention suggestion instead of the generic 4x/week.
+ *   C. Borderline — composite or any subtest in the bottom 25% of this
+ *      year's Grade 1 cohort, regardless of national benchmark status.
+ *      -> Watch: monthly progress monitoring, escalating to intervention
+ *      if a later benchmark comes back Well Below, or two consecutive PM
+ *      scores land below that period's benchmark.
+ *
+ * Priority when multiple flags apply: A > confirmed B > pending B > C.
  */
 
-import { getBenchmarkStatus, getThresholds, STATUS, RISK_LABEL, benchmarkStatusToRiskLabel } from "./scoringEngine";
-import { MEASURE_SCHEDULE } from "./scoringEngine";
+import {
+  getBenchmarkStatus,
+  getThresholds,
+  calculateComposite,
+  STATUS,
+  RISK_LABEL,
+  benchmarkStatusToRiskLabel,
+  MEASURE_SCHEDULE,
+} from "./scoringEngine";
 
 // ---------------------------------------------------------------------------
 // What each measure means and why it predicts later reading success
@@ -25,7 +52,7 @@ export const MEASURE_CORRELATION = {
   },
   lnf: {
     name: "Letter Naming Fluency (LNF)",
-    note: "Measures how quickly a student names upper- and lowercase letters. LNF has no benchmark goal of its own — it isn't something to directly teach — but Acadience's research shows it's a reliable early predictor of reading risk, so it's included as a flag rather than a skill target.",
+    note: "Measures how quickly a student names upper- and lowercase letters. Real but modest predictor of later reading (correlation ~0.5, so it accounts for roughly a quarter of the variation in outcomes) — and Acadience is explicit that it isn't a powerful instructional target. It has no benchmark goal and never drives a recommendation on this report by itself; it's shown for context only.",
   },
   psf: {
     name: "Phoneme Segmentation Fluency (PSF)",
@@ -75,6 +102,16 @@ export function getLocalPercentile(values, value) {
   return Math.round(((below + 0.5 * equal) / nums.length) * 100);
 }
 
+/** { composite: [values...], psf: [values...], ... } across a grade cohort —
+ * the peer group for local-percentile comparisons, one array per measure. */
+export function getLocalValuesByMeasure(gradeRows, measures) {
+  const out = {};
+  for (const m of ["composite", ...measures]) {
+    out[m] = (gradeRows || []).map((r) => r.score?.[m]).filter((v) => v != null && !isNaN(v));
+  }
+  return out;
+}
+
 /** "43rd", "22nd", "3rd", "14th" — the 11-13 exception, then last digit. */
 export function ordinal(n) {
   const rem100 = n % 100;
@@ -91,63 +128,6 @@ export function ordinal(n) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Intervention recommendation
-// ---------------------------------------------------------------------------
-
-export const INTERVENTION_LEVEL = {
-  STRONG: { level: "Strong", days: 4, risk: RISK_LABEL.AT_HIGH_RISK },
-  MODERATE: { level: "Moderate", days: 2, risk: RISK_LABEL.AT_SOME_RISK },
-  MONITOR: { level: "Monitor", days: 0, risk: RISK_LABEL.ON_TRACK },
-  NONE: { level: "None", days: 0, risk: RISK_LABEL.ADVANCED },
-};
-
-const LOCAL_PERCENTILE_OVERRIDE_CUTOFF = 10;
-
-const STATUS_SEVERITY = {
-  [STATUS.WELL_BELOW.status]: 0,
-  [STATUS.BELOW.status]: 1,
-  [STATUS.AT.status]: 2,
-  [STATUS.ABOVE.status]: 3,
-};
-
-/** The more severe (lower-likelihood) of two benchmark statuses; null-safe. */
-function moreSevereStatus(a, b) {
-  if (!a) return b;
-  if (!b) return a;
-  return STATUS_SEVERITY[a.status] <= STATUS_SEVERITY[b.status] ? a : b;
-}
-
-/**
- * Intervention intensity from the composite's national benchmark status,
- * with one override: a student At Benchmark nationally but in the bottom
- * 10% of their own grade locally still gets bumped to Moderate, since a
- * whole local cohort can run above or below the national norm.
- *
- * @param {{status:string}|null} compositeStatus - from getBenchmarkStatus
- * @param {number|null} localPercentile - from getLocalPercentile
- */
-export function getInterventionRecommendation(compositeStatus, localPercentile) {
-  let rec;
-  if (compositeStatus?.status === STATUS.WELL_BELOW.status) rec = INTERVENTION_LEVEL.STRONG;
-  else if (compositeStatus?.status === STATUS.BELOW.status) rec = INTERVENTION_LEVEL.MODERATE;
-  else if (compositeStatus?.status === STATUS.ABOVE.status) rec = INTERVENTION_LEVEL.NONE;
-  else if (compositeStatus?.status === STATUS.AT.status) rec = INTERVENTION_LEVEL.MONITOR;
-  else return { ...INTERVENTION_LEVEL.MONITOR, overridden: false, reason: "no-composite" };
-
-  let overridden = false;
-  if (
-    compositeStatus?.status === STATUS.AT.status &&
-    localPercentile != null &&
-    localPercentile <= LOCAL_PERCENTILE_OVERRIDE_CUTOFF
-  ) {
-    rec = INTERVENTION_LEVEL.MODERATE;
-    overridden = true;
-  }
-
-  return { ...rec, overridden };
-}
-
 /** Acadience's documented likelihood-of-future-success band for a benchmark status. */
 export function getLikelihoodText(status) {
   if (status?.status === STATUS.ABOVE.status) return "roughly 90-99% likelihood of reaching future reading goals";
@@ -158,78 +138,203 @@ export function getLikelihoodText(status) {
 }
 
 // ---------------------------------------------------------------------------
-// Progress monitoring plan
+// Composite sanity check
 // ---------------------------------------------------------------------------
 
-const PM_CADENCE = { Strong: "weekly", Moderate: "every 2 weeks", Monitor: "at the next benchmark", None: "at the next benchmark" };
-
 /**
- * Which measure(s) to progress-monitor and how often, based on the
- * intervention level and which of this period's subtests are themselves
- * Below or Well Below benchmark (the actual deficit areas to track).
+ * Compare the stored composite against what this app's own formula would
+ * calculate from the same subtests. A mismatch beyond a couple points is
+ * surfaced as a data-quality note — never silently corrected, since we
+ * don't know which value is authoritative (a different but valid official
+ * methodology vs. a transcription error).
  */
-export function getProgressMonitoringPlan(level, belowMeasureNames) {
-  const cadence = PM_CADENCE[level] || "at the next benchmark";
-  if (level === "Monitor" || level === "None" || belowMeasureNames.length === 0) {
-    return { cadence, measures: [], text: `Continue benchmark-only monitoring (BOY/MOY/EOY); no additional progress monitoring needed ${cadence}.` };
-  }
-  const list = belowMeasureNames.join(" and ");
-  return {
-    cadence,
-    measures: belowMeasureNames,
-    text: `Progress monitor ${list} ${cadence} using Acadience Progress Monitoring materials.`,
-  };
+export function checkCompositeMismatch(grade, period, scoreRow) {
+  if (!scoreRow || scoreRow.composite == null) return null;
+  const expected = calculateComposite(grade, period, scoreRow);
+  if (expected == null) return null;
+  const stored = Number(scoreRow.composite);
+  if (isNaN(stored)) return null;
+  const diff = Math.round((expected - stored) * 10) / 10;
+  if (Math.abs(diff) <= 2) return null;
+  return { stored, expected, diff };
 }
 
-/** One paragraph tying the composite status, ORF (if it's the driving
- * signal), local percentile, and any override together — the "why" behind
- * the recommendation. */
-export function getRecommendationReasoning(assessment) {
-  const { compositeStatus, effectiveStatus, orfDriven, localPercentile, recommendation } = assessment;
-  const statusForLikelihood = effectiveStatus || compositeStatus;
-  if (!statusForLikelihood) {
-    return "No composite or ORF score is available this period, so an intervention level can't be determined yet.";
-  }
-  const pctText =
-    localPercentile != null
-      ? ` and ranks in the ${ordinal(localPercentile)} percentile among this year's Grade 1 students at Baymonte`
-      : "";
+// ---------------------------------------------------------------------------
+// Skill-specific intervention suggestions (Flag B, once confirmed)
+// ---------------------------------------------------------------------------
 
-  if (orfDriven) {
-    const compositeText = compositeStatus ? compositeStatus.status : "not yet available this period";
-    return (
-      `The composite score is ${compositeText}, but this period's Oral Reading Fluency score ` +
-      `(DIBELS 8 Grade 1 BOY benchmark) is ${effectiveStatus.status} — the more urgent of the two signals${pctText}. ` +
-      `Recommending based on the ORF result.`
-    );
+export const SPECIFIC_INTERVENTIONS = {
+  psf: "Targeted Orton-Gillingham phonemic awareness work — segmenting and blending sounds — rather than a full core replacement.",
+  nwf_cls: "Targeted Orton-Gillingham letter-sound automaticity drills (alphabetic principle).",
+  nwf_wwr: "Targeted Orton-Gillingham blending practice — decoding whole words from sounded-out parts.",
+  orf_words: "Targeted Orton-Gillingham fluency building — repeated reading of decodable text at the student's level.",
+  orf_accuracy: "Targeted Orton-Gillingham decoding-accuracy review — low accuracy with reasonable speed usually means guessing, not sounding out; revisit the phonics patterns being missed.",
+  retell: "Targeted comprehension-strategy support — retelling structure and main-idea identification.",
+};
+
+const RETEST_WINDOW = "within 2-3 weeks";
+
+// ---------------------------------------------------------------------------
+// Flag A — low across the board
+// ---------------------------------------------------------------------------
+
+function checkLowAcrossBoard(compositeStatus, nonLnfSubtests) {
+  if (compositeStatus?.status !== STATUS.WELL_BELOW.status) return null;
+  const belowOrWorse = nonLnfSubtests.filter(
+    (s) => s.status?.status === STATUS.BELOW.status || s.status?.status === STATUS.WELL_BELOW.status
+  );
+  if (belowOrWorse.length < 2) return null;
+  return { measures: belowOrWorse.map((s) => s.measure) };
+}
+
+// ---------------------------------------------------------------------------
+// Flag B — significantly low in one remediable area, retest -> confirm
+// ---------------------------------------------------------------------------
+
+/**
+ * Look for a later data point on the same measure — the next benchmark
+ * period in this student's history, or a progress-monitoring score dated
+ * after this one — to decide whether a Well Below subtest is confirmed
+ * (still low), resolved (came back fine), or still pending (no follow-up
+ * data yet).
+ */
+function followUpForMeasure(measure, grade, period, scoreRow, history, pmScores) {
+  const thisDate = scoreRow?.assessment_date || "";
+  const ref = getThresholds(grade, period, measure);
+
+  // Next official benchmark period for this measure, if this report is
+  // being generated retrospectively (e.g. viewing BOY after MOY happened).
+  const idx = (history || []).findIndex(
+    (h) => h.school_year === scoreRow?.school_year && h.period === period && String(h.grade) === String(grade)
+  );
+  if (idx !== -1) {
+    for (let i = idx + 1; i < history.length; i++) {
+      const row = history[i];
+      if (row[measure] == null) continue;
+      const status = getBenchmarkStatus(row.grade, row.period, measure, row[measure]);
+      if (!status) continue;
+      return {
+        state: status.status === STATUS.WELL_BELOW.status ? "confirmed" : "resolved",
+        source: "benchmark",
+        label: `${row.period} benchmark`,
+        value: row[measure],
+      };
+    }
   }
 
-  const likelihood = getLikelihoodText(statusForLikelihood);
-  if (recommendation.overridden) {
-    return (
-      `The composite score is At Benchmark nationally (${likelihood})${pctText} — among the lowest in this ` +
-      `year's local cohort. Recommending Moderate intervention as a precaution, since a whole grade can run ` +
-      `above or below the national norm.`
-    );
+  // Otherwise, the most recent progress-monitoring score for this measure.
+  const laterPMs = (pmScores || [])
+    .filter((pm) => pm[measure] != null && (!thisDate || (pm.assessment_date || "") > thisDate))
+    .sort((a, b) => (a.assessment_date || "").localeCompare(b.assessment_date || ""));
+  if (laterPMs.length > 0 && ref?.at != null) {
+    const latest = laterPMs[laterPMs.length - 1];
+    const stillBelow = Number(latest[measure]) < ref.at;
+    return {
+      state: stillBelow ? "confirmed" : "resolved",
+      source: "progress monitoring",
+      label: `PM on ${latest.assessment_date}`,
+      value: latest[measure],
+    };
   }
-  return `The composite score is ${statusForLikelihood.status} (${likelihood})${pctText}.`;
+
+  return { state: "pending" };
+}
+
+function checkSingleAreaDeficits(nonLnfSubtests, grade, period, scoreRow, history, pmScores) {
+  return nonLnfSubtests
+    .filter((s) => s.status?.status === STATUS.WELL_BELOW.status)
+    .map((s) => ({
+      measure: s.measure,
+      name: s.name,
+      followUp: followUpForMeasure(s.measure, grade, period, scoreRow, history, pmScores),
+    }))
+    .filter((d) => d.followUp.state !== "resolved"); // dropped once a later score comes back fine
+}
+
+// ---------------------------------------------------------------------------
+// Flag C — borderline (bottom 25% locally)
+// ---------------------------------------------------------------------------
+
+const BORDERLINE_PERCENTILE_CUTOFF = 25;
+
+function checkBorderline(compositeValue, compositePercentile, nonLnfSubtests, localValuesByMeasure) {
+  const flagged = [];
+  if (compositePercentile != null && compositePercentile <= BORDERLINE_PERCENTILE_CUTOFF) {
+    flagged.push({ measure: "composite", name: "Composite Score", percentile: compositePercentile });
+  }
+  for (const s of nonLnfSubtests) {
+    if (s.value == null) continue;
+    const pct = getLocalPercentile(localValuesByMeasure?.[s.measure], s.value);
+    if (pct != null && pct <= BORDERLINE_PERCENTILE_CUTOFF) {
+      flagged.push({ measure: s.measure, name: s.name, percentile: pct });
+    }
+  }
+  return flagged;
+}
+
+/** Has this borderline case already earned escalation from Watch to a real
+ * intervention — a later benchmark Well Below, or two consecutive PM scores
+ * below that period's own benchmark? */
+function checkWatchEscalation(borderlineMeasures, grade, period, scoreRow, history, pmScores) {
+  for (const b of borderlineMeasures) {
+    if (b.measure === "composite") continue; // escalation is judged per skill, not the composite itself
+    const followUp = followUpForMeasure(b.measure, grade, period, scoreRow, history, pmScores);
+    if (followUp.state === "confirmed" && followUp.source === "benchmark") {
+      return { measure: b.measure, reason: `a later benchmark came back Well Below Benchmark (${followUp.label})` };
+    }
+    const relevant = (pmScores || [])
+      .filter((pm) => pm[b.measure] != null)
+      .sort((a, c) => (a.assessment_date || "").localeCompare(c.assessment_date || ""));
+    const ref = getThresholds(grade, period, b.measure);
+    if (relevant.length >= 2 && ref?.at != null) {
+      const lastTwo = relevant.slice(-2);
+      const bothBelow = lastTwo.every((pm) => Number(pm[b.measure]) < ref.at);
+      if (bothBelow) {
+        return { measure: b.measure, reason: "the last two progress-monitoring scores both came back below benchmark" };
+      }
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Recommendation tiers
+// ---------------------------------------------------------------------------
+
+export const TIER = {
+  STRONG: { tier: "Strong", label: "Strong", days: 4, risk: RISK_LABEL.AT_HIGH_RISK },
+  CONFIRMED: { tier: "Confirmed", label: "Confirmed", days: 2, risk: RISK_LABEL.AT_SOME_RISK },
+  RETEST: { tier: "RetestNeeded", label: "Retest Needed", days: 0, risk: RISK_LABEL.AT_SOME_RISK },
+  WATCH: { tier: "Watch", label: "Watch", days: 0, risk: RISK_LABEL.ON_TRACK },
+  NONE: { tier: "None", label: "None", days: 0, risk: RISK_LABEL.ADVANCED },
+};
+
+function measureName(measure) {
+  return MEASURE_CORRELATION[measure]?.name.replace(/\s*\([A-Z-]+\)$/, "") || measure;
 }
 
 /**
  * Build everything the Grade 1 report needs for one student: composite
- * status, per-subtest breakdown, local percentile, intervention level, and
- * a progress-monitoring plan.
+ * status (with a mismatch check), per-subtest breakdown, local percentiles,
+ * the three flags, the resulting recommendation tier, and a progress-
+ * monitoring plan.
+ *
+ * @param {object} args
+ * @param {string} args.grade
+ * @param {string} args.period
+ * @param {object|null} args.scoreRow - this student's score row for the period
+ * @param {Array<object>} [args.history] - this student's full Acadience history (for later-period follow-up checks)
+ * @param {Array<object>} [args.pmScores] - this student's progress-monitoring records
+ * @param {{composite: number[], [measure: string]: number[]}} [args.localValuesByMeasure] - this year/period's whole-grade values, per measure
  */
-export function buildGrade1Assessment(grade, period, scoreRow, localCompositeValues) {
+export function buildGrade1Assessment({ grade, period, scoreRow, history = [], pmScores = [], localValuesByMeasure = {} }) {
   const measures = MEASURE_SCHEDULE[grade]?.[period] || [];
   const composite = scoreRow?.composite;
   const compositeStatus = composite != null ? getBenchmarkStatus(grade, period, "composite", composite) : null;
-  const localPercentile = composite != null ? getLocalPercentile(localCompositeValues, composite) : null;
+  const localPercentile = composite != null ? getLocalPercentile(localValuesByMeasure.composite, composite) : null;
+  const compositeMismatch = checkCompositeMismatch(grade, period, scoreRow);
 
-  // Grade 1 BOY ORF is benchmarked against DIBELS 8 (Acadience doesn't
-  // score ORF until MOY) — flag it so the report can say so.
   const isBoyOrfDibels8 = grade === "1" && period === "BOY";
-
   const subtests = measures.map((m) => {
     const value = scoreRow?.[m];
     const status = value != null ? getBenchmarkStatus(grade, period, m, value) : null;
@@ -250,34 +355,87 @@ export function buildGrade1Assessment(grade, period, scoreRow, localCompositeVal
     };
   });
 
-  const belowMeasureNames = subtests
-    .filter((s) => s.status?.status === STATUS.BELOW.status || s.status?.status === STATUS.WELL_BELOW.status)
-    .map((s) => s.name.replace(/\s*\([A-Z-]+\)$/, "")); // drop the "(NWF-CLS)"-style suffix for prose
+  const nonLnfSubtests = subtests.filter((s) => s.measure !== "lnf" && s.hasBenchmark);
 
-  // Grade 1 BOY only: the recommendation uses whichever is more severe of
-  // the composite and this period's DIBELS 8 ORF benchmark — a student
-  // fine on the composite but Below/Well Below on ORF still gets flagged.
-  const orfWordsStatus = subtests.find((s) => s.measure === "orf_words")?.status || null;
-  const usesOrfSignal = grade === "1" && period === "BOY" && orfWordsStatus != null;
-  const effectiveStatus = usesOrfSignal ? moreSevereStatus(compositeStatus, orfWordsStatus) : compositeStatus;
-  const orfDriven =
-    usesOrfSignal &&
-    effectiveStatus === orfWordsStatus &&
-    (!compositeStatus || STATUS_SEVERITY[orfWordsStatus.status] < STATUS_SEVERITY[compositeStatus.status]);
+  const flagA = checkLowAcrossBoard(compositeStatus, nonLnfSubtests);
+  const flagB = checkSingleAreaDeficits(nonLnfSubtests, grade, period, scoreRow, history, pmScores);
+  const flagBConfirmed = flagB.filter((d) => d.followUp.state === "confirmed");
+  const flagBPending = flagB.filter((d) => d.followUp.state === "pending");
+  const flagC = checkBorderline(composite, localPercentile, nonLnfSubtests, localValuesByMeasure);
+  const watchEscalation = flagC.length > 0 ? checkWatchEscalation(flagC, grade, period, scoreRow, history, pmScores) : null;
 
-  const recommendation = getInterventionRecommendation(effectiveStatus, localPercentile);
-  const pmPlan = getProgressMonitoringPlan(recommendation.level, belowMeasureNames);
+  // Priority: A > confirmed B > pending B > escalated watch > watch > none.
+  let recommendation;
+  if (flagA) {
+    recommendation = {
+      ...TIER.STRONG,
+      reasoning:
+        `Composite is Well Below Benchmark and ${flagA.measures.length} other subtests ` +
+        `(${flagA.measures.map(measureName).join(", ")}) are also Below or Well Below — a low profile across the board, not one isolated score.`,
+      pmPlan: { cadence: "weekly", text: `Progress monitor ${flagA.measures.map(measureName).join(" and ")} weekly using Acadience Progress Monitoring materials.` },
+    };
+  } else if (flagBConfirmed.length > 0) {
+    const d = flagBConfirmed[0];
+    recommendation = {
+      ...TIER.CONFIRMED,
+      label: `Confirmed — ${measureName(d.measure)}`,
+      reasoning:
+        `${measureName(d.measure)} was Well Below Benchmark and a follow-up (${d.followUp.label}) confirmed it's still low. ` +
+        `${SPECIFIC_INTERVENTIONS[d.measure] || "Targeted skill-specific intervention recommended."}`,
+      pmPlan: { cadence: "every 2 weeks", text: `Progress monitor ${measureName(d.measure)} every 2 weeks using Acadience Progress Monitoring materials.` },
+    };
+  } else if (flagBPending.length > 0) {
+    const d = flagBPending[0];
+    recommendation = {
+      ...TIER.RETEST,
+      label: `Retest Needed — ${measureName(d.measure)}`,
+      days: 0,
+      reasoning:
+        `${measureName(d.measure)} is Well Below Benchmark on its own, even though the rest of the profile may look fine. ` +
+        `Before starting intervention, recommend a retest or follow-up assessment of ${measureName(d.measure)} ${RETEST_WINDOW} to confirm — a single low score can be a testing-day fluke.`,
+      pmPlan: { cadence: "in 2-3 weeks", text: `Retest or progress-monitor ${measureName(d.measure)} ${RETEST_WINDOW} to confirm before deciding on intervention.` },
+    };
+  } else if (watchEscalation) {
+    recommendation = {
+      ...TIER.CONFIRMED,
+      label: `Confirmed — ${measureName(watchEscalation.measure)}`,
+      reasoning:
+        `${measureName(watchEscalation.measure)} was borderline (bottom ${BORDERLINE_PERCENTILE_CUTOFF}% locally) and has since escalated: ${watchEscalation.reason}. ` +
+        `${SPECIFIC_INTERVENTIONS[watchEscalation.measure] || "Targeted skill-specific intervention recommended."}`,
+      pmPlan: { cadence: "every 2 weeks", text: `Progress monitor ${measureName(watchEscalation.measure)} every 2 weeks using Acadience Progress Monitoring materials.` },
+    };
+  } else if (flagC.length > 0) {
+    const names = flagC.map((f) => (f.measure === "composite" ? "the composite" : measureName(f.measure)));
+    recommendation = {
+      ...TIER.WATCH,
+      reasoning:
+        `${names.join(" and ")} rank${names.length === 1 ? "s" : ""} in the bottom ${BORDERLINE_PERCENTILE_CUTOFF}% of this year's Grade 1 cohort at Baymonte, even without a Well Below national benchmark. ` +
+        `Early intervention pays off disproportionately in Grade 1, so this is worth a short watch window rather than waiting a full period to see if it resolves on its own.`,
+      pmPlan: {
+        cadence: "monthly",
+        text:
+          `Progress monitor ${names.join(" and ")} monthly. Move to intervention if a later benchmark comes back Well Below Benchmark, ` +
+          `or if two consecutive monthly progress-monitoring scores land below that period's benchmark — don't let a borderline case ride for a full period.`,
+      },
+    };
+  } else {
+    recommendation = {
+      ...TIER.NONE,
+      reasoning: compositeStatus
+        ? `Composite is ${compositeStatus.status} (${getLikelihoodText(compositeStatus)}), and no subtest is a standout concern.`
+        : "No composite score is available this period, and no subtest is a standout concern.",
+      pmPlan: { cadence: "at the next benchmark", text: "Continue benchmark-only monitoring (BOY/MOY/EOY); no additional progress monitoring needed." },
+    };
+  }
 
   return {
     composite,
     compositeStatus,
     compositeRisk: benchmarkStatusToRiskLabel(compositeStatus),
-    orfWordsStatus,
-    effectiveStatus,
-    orfDriven,
+    compositeMismatch,
     localPercentile,
     subtests,
+    flags: { lowAcrossBoard: flagA, singleAreaDeficits: flagB, borderline: flagC, watchEscalation },
     recommendation,
-    pmPlan,
   };
 }
