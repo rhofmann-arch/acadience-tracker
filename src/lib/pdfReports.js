@@ -30,6 +30,7 @@ import {
   buildGrade1Assessment,
   getLocalValuesByMeasure,
   ordinal,
+  TIER,
 } from "./grade1Report";
 
 // ---------------------------------------------------------------------------
@@ -1092,9 +1093,19 @@ function drawFluencyChart(doc, rect, points, actual) {
     for (let i = actual.length - 1; i >= 0; i--) if (actual[i] != null) return i;
     return -1;
   })();
-  if (lastActualIdx === n - 1) {
+  if (lastActualIdx >= 0) {
     doc.setTextColor(...COLORS.actualLine);
-    doc.text(`${Math.round(actual[lastActualIdx])} cwpm`, x + width - pad.right + 4, yFor(actual[lastActualIdx]) + 10);
+    if (lastActualIdx === n - 1) {
+      doc.text(`${Math.round(actual[lastActualIdx])} cwpm`, x + width - pad.right + 4, yFor(actual[lastActualIdx]) + 10);
+    } else {
+      const above = actual[lastActualIdx] >= points[lastActualIdx].goalCwpm;
+      doc.text(
+        `${Math.round(actual[lastActualIdx])} cwpm`,
+        xFor(lastActualIdx),
+        yFor(actual[lastActualIdx]) + (above ? -6 : 11),
+        { align: "center" }
+      );
+    }
   }
   doc.setFont(undefined, "normal");
 
@@ -1393,6 +1404,52 @@ function pushToRiskBucket(buckets, risk, line) {
   else if (risk.label === RISK_LABEL.ADVANCED.label) buckets.advanced.push(line);
   else return false;
   return true;
+}
+
+/**
+ * Grade 1 dashboard bucketing — sorted by the student's actual recommended
+ * intervention tier (from buildGrade1Assessment), NOT by the composite's raw
+ * benchmark status. A high composite with a borderline single subtest still
+ * lands in "Watch", and a below-benchmark composite with no triggered flags
+ * still lands in "On Track" — the bucket always matches the recommendation
+ * shown on the student's own line and on their Grade 1 Reading Risk Report.
+ */
+function pushToGrade1RecommendationBucket(buckets, tier, line) {
+  if (tier === TIER.STRONG.tier) buckets.strong.push(line);
+  else if (tier === TIER.CONFIRMED.tier || tier === TIER.RETEST.tier) buckets.moderate.push(line);
+  else if (tier === TIER.WATCH.tier) buckets.watch.push(line);
+  else if (tier === TIER.NONE.tier) buckets.onTrack.push(line);
+  else return false;
+  return true;
+}
+
+function drawGrade1RecommendationBucketTable(doc, startY, margin, pageWidth, buckets) {
+  const head = [["Strong Recommendation", "Moderate Recommendation", "Watch", "On Track"]];
+  const cols = [buckets.strong, buckets.moderate, buckets.watch, buckets.onTrack];
+  const body = [cols.map((lines) => (lines.length > 0 ? lines.join("\n") : "—"))];
+  const headColors = [COLORS.wellBelow, COLORS.below, COLORS.actualLine, COLORS.above];
+
+  autoTable(doc, {
+    startY,
+    head,
+    body,
+    margin: { left: margin, right: margin },
+    styles: { fontSize: 9, cellPadding: 6, lineColor: [226, 232, 240], lineWidth: 0.5, valign: "top" },
+    headStyles: { fontStyle: "bold", halign: "center", textColor: COLORS.white, fontSize: 9 },
+    columnStyles: { 0: { cellWidth: (pageWidth - margin * 2) / 4 } },
+    didParseCell: (data) => {
+      if (data.section === "head") {
+        data.cell.styles.fillColor = headColors[data.column.index];
+      }
+      if (data.section === "body" && cols[data.column.index].length === 0) {
+        data.cell.styles.textColor = [203, 213, 225];
+        data.cell.styles.halign = "center";
+      }
+    },
+    theme: "grid",
+  });
+
+  return doc.lastAutoTable.finalY;
 }
 
 /**
@@ -1816,7 +1873,7 @@ export function generateGrade1TeacherDashboard(classInfo, grade, period, year, c
 
   doc.setFontSize(13);
   doc.setTextColor(...COLORS.header);
-  doc.text("Reading Risk — Composite Score", margin, y);
+  doc.text("Intervention Recommendation Summary", margin, y);
   y += 16;
 
   const compRef = getThresholds(grade, period, "composite");
@@ -1830,7 +1887,12 @@ export function generateGrade1TeacherDashboard(classInfo, grade, period, year, c
   const measures = MEASURE_SCHEDULE[grade]?.[period] || [];
   const localValuesByMeasure = getLocalValuesByMeasure(gradeRows, measures);
 
-  const buckets = { highRisk: [], someRisk: [], onTrack: [], advanced: [] };
+  // Bucketed by each student's actual recommended intervention tier — not
+  // by the composite's raw benchmark status, which can disagree with the
+  // recommendation (e.g. a high composite with one borderline subtest still
+  // gets a Watch; a below-benchmark composite with no triggered flags is
+  // still On Track). See pushToGrade1RecommendationBucket.
+  const buckets = { strong: [], moderate: [], watch: [], onTrack: [] };
   const noScore = [];
   for (const { student, score, history, pmScores } of classRows) {
     const composite = score?.composite;
@@ -1843,10 +1905,10 @@ export function generateGrade1TeacherDashboard(classInfo, grade, period, year, c
     const assessment = buildGrade1Assessment({ grade, period, scoreRow: score, history, pmScores, localValuesByMeasure });
     const pct = assessment.localPercentile;
     const line = `${studentName(student)} — ${formatScore(composite)}${pct != null ? ` (${ordinal(pct)} %ile)` : ""} — ${assessment.recommendation.label}`;
-    if (!pushToRiskBucket(buckets, assessment.recommendation.risk, line)) noScore.push(studentName(student));
+    if (!pushToGrade1RecommendationBucket(buckets, assessment.recommendation.tier, line)) noScore.push(studentName(student));
   }
 
-  y = drawRiskBucketTable(doc, y, margin, pageWidth, buckets) + 10;
+  y = drawGrade1RecommendationBucketTable(doc, y, margin, pageWidth, buckets) + 10;
 
   if (noScore.length > 0) {
     doc.setFontSize(8);
@@ -1859,8 +1921,10 @@ export function generateGrade1TeacherDashboard(classInfo, grade, period, year, c
   doc.setFontSize(8);
   doc.setTextColor(148, 163, 184);
   const noteLines = doc.splitTextToSize(
-    "Buckets reflect the recommended tier — Strong (4x/week), Confirmed or Retest Needed (a specific subtest, not " +
-    "the whole profile), Watch (borderline locally, monthly progress monitoring), or None — which weighs the " +
+    "Buckets reflect each student's recommended intervention tier — Strong (4x/week), Moderate (a specific " +
+    "subtest deficit confirmed, or a retest needed to confirm one — 2x/week once confirmed), Watch (borderline " +
+    "locally; monthly progress monitoring, with earlier intervention if a later benchmark comes in Well Below or " +
+    "two consecutive PMs come in low), or On Track (no intervention recommended at this time) — which weighs the " +
     "composite, individual subtests, and how each student compares to this year's whole Grade 1 cohort at " +
     "Baymonte. See each student's Grade 1 Reading Risk Report for the full breakdown and reasoning. Intervention " +
     "model: Orton-Gillingham, 30 minutes per session.",
