@@ -28,8 +28,6 @@ import { getComprehensionSummary, getComprehensionWeights } from "./comprehensio
 import {
   buildGrade1Assessment,
   getRecommendationReasoning,
-  getLocalPercentile,
-  getInterventionRecommendation,
   ordinal,
 } from "./grade1Report";
 
@@ -1820,11 +1818,13 @@ export function generateGrade1TeacherDashboard(classInfo, grade, period, year, c
       noScore.push(studentName(student));
       continue;
     }
-    const status = getBenchmarkStatus(grade, period, "composite", composite);
-    const pct = getLocalPercentile(gradeCompositeValues, composite);
-    const rec = getInterventionRecommendation(status, pct);
+    // Reuse the individual report's logic so the dashboard bucket always
+    // matches that student's Grade 1 Reading Risk Report — including the
+    // BOY worst-of-composite-and-ORF rule.
+    const assessment = buildGrade1Assessment(grade, period, score, gradeCompositeValues);
+    const pct = assessment.localPercentile;
     const line = `${studentName(student)} — ${formatScore(composite)}${pct != null ? ` (${ordinal(pct)} %ile)` : ""}`;
-    if (!pushToRiskBucket(buckets, rec.risk, line)) noScore.push(studentName(student));
+    if (!pushToRiskBucket(buckets, assessment.recommendation.risk, line)) noScore.push(studentName(student));
   }
 
   y = drawRiskBucketTable(doc, y, margin, pageWidth, buckets) + 10;

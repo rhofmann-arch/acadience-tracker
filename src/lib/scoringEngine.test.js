@@ -558,9 +558,9 @@ describe("getMeasuresForGradePeriod", () => {
     expect(getMeasuresForGradePeriod("K", "BOY")).toBeNull();
   });
 
-  it("G1 BOY has lnf, psf, nwf_cls, nwf_wwr", () => {
+  it("G1 BOY has lnf, psf, nwf_cls, nwf_wwr, orf_words, orf_accuracy", () => {
     expect(getMeasuresForGradePeriod("1", "BOY")).toEqual([
-      "composite", "lnf", "psf", "nwf_cls", "nwf_wwr",
+      "composite", "lnf", "psf", "nwf_cls", "nwf_wwr", "orf_words", "orf_accuracy",
     ]);
   });
 

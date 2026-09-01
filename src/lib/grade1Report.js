@@ -104,6 +104,20 @@ export const INTERVENTION_LEVEL = {
 
 const LOCAL_PERCENTILE_OVERRIDE_CUTOFF = 10;
 
+const STATUS_SEVERITY = {
+  [STATUS.WELL_BELOW.status]: 0,
+  [STATUS.BELOW.status]: 1,
+  [STATUS.AT.status]: 2,
+  [STATUS.ABOVE.status]: 3,
+};
+
+/** The more severe (lower-likelihood) of two benchmark statuses; null-safe. */
+function moreSevereStatus(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return STATUS_SEVERITY[a.status] <= STATUS_SEVERITY[b.status] ? a : b;
+}
+
 /**
  * Intervention intensity from the composite's national benchmark status,
  * with one override: a student At Benchmark nationally but in the bottom
@@ -167,18 +181,30 @@ export function getProgressMonitoringPlan(level, belowMeasureNames) {
   };
 }
 
-/** One paragraph tying the composite status, local percentile, and any
- * override together — the "why" behind the recommendation. */
+/** One paragraph tying the composite status, ORF (if it's the driving
+ * signal), local percentile, and any override together — the "why" behind
+ * the recommendation. */
 export function getRecommendationReasoning(assessment) {
-  const { compositeStatus, localPercentile, recommendation } = assessment;
-  if (!compositeStatus) {
-    return "No composite score is available this period, so an intervention level can't be determined yet.";
+  const { compositeStatus, effectiveStatus, orfDriven, localPercentile, recommendation } = assessment;
+  const statusForLikelihood = effectiveStatus || compositeStatus;
+  if (!statusForLikelihood) {
+    return "No composite or ORF score is available this period, so an intervention level can't be determined yet.";
   }
-  const likelihood = getLikelihoodText(compositeStatus);
   const pctText =
     localPercentile != null
       ? ` and ranks in the ${ordinal(localPercentile)} percentile among this year's Grade 1 students at Baymonte`
       : "";
+
+  if (orfDriven) {
+    const compositeText = compositeStatus ? compositeStatus.status : "not yet available this period";
+    return (
+      `The composite score is ${compositeText}, but this period's Oral Reading Fluency score ` +
+      `(DIBELS 8 Grade 1 BOY benchmark) is ${effectiveStatus.status} — the more urgent of the two signals${pctText}. ` +
+      `Recommending based on the ORF result.`
+    );
+  }
+
+  const likelihood = getLikelihoodText(statusForLikelihood);
   if (recommendation.overridden) {
     return (
       `The composite score is At Benchmark nationally (${likelihood})${pctText} — among the lowest in this ` +
@@ -186,7 +212,7 @@ export function getRecommendationReasoning(assessment) {
       `above or below the national norm.`
     );
   }
-  return `The composite score is ${compositeStatus.status} (${likelihood})${pctText}.`;
+  return `The composite score is ${statusForLikelihood.status} (${likelihood})${pctText}.`;
 }
 
 /**
@@ -200,13 +226,23 @@ export function buildGrade1Assessment(grade, period, scoreRow, localCompositeVal
   const compositeStatus = composite != null ? getBenchmarkStatus(grade, period, "composite", composite) : null;
   const localPercentile = composite != null ? getLocalPercentile(localCompositeValues, composite) : null;
 
+  // Grade 1 BOY ORF is benchmarked against DIBELS 8 (Acadience doesn't
+  // score ORF until MOY) — flag it so the report can say so.
+  const isBoyOrfDibels8 = grade === "1" && period === "BOY";
+
   const subtests = measures.map((m) => {
     const value = scoreRow?.[m];
     const status = value != null ? getBenchmarkStatus(grade, period, m, value) : null;
     const ref = getThresholds(grade, period, m);
+    const correlation = MEASURE_CORRELATION[m];
+    const note =
+      isBoyOrfDibels8 && (m === "orf_words" || m === "orf_accuracy")
+        ? `${correlation.note} Benchmarked against DIBELS 8th Edition, since Acadience doesn't score ORF until Grade 1 MOY.`
+        : correlation.note;
     return {
       measure: m,
-      ...MEASURE_CORRELATION[m],
+      ...correlation,
+      note,
       value,
       status,
       risk: benchmarkStatusToRiskLabel(status),
@@ -218,13 +254,27 @@ export function buildGrade1Assessment(grade, period, scoreRow, localCompositeVal
     .filter((s) => s.status?.status === STATUS.BELOW.status || s.status?.status === STATUS.WELL_BELOW.status)
     .map((s) => s.name.replace(/\s*\([A-Z-]+\)$/, "")); // drop the "(NWF-CLS)"-style suffix for prose
 
-  const recommendation = getInterventionRecommendation(compositeStatus, localPercentile);
+  // Grade 1 BOY only: the recommendation uses whichever is more severe of
+  // the composite and this period's DIBELS 8 ORF benchmark — a student
+  // fine on the composite but Below/Well Below on ORF still gets flagged.
+  const orfWordsStatus = subtests.find((s) => s.measure === "orf_words")?.status || null;
+  const usesOrfSignal = grade === "1" && period === "BOY" && orfWordsStatus != null;
+  const effectiveStatus = usesOrfSignal ? moreSevereStatus(compositeStatus, orfWordsStatus) : compositeStatus;
+  const orfDriven =
+    usesOrfSignal &&
+    effectiveStatus === orfWordsStatus &&
+    (!compositeStatus || STATUS_SEVERITY[orfWordsStatus.status] < STATUS_SEVERITY[compositeStatus.status]);
+
+  const recommendation = getInterventionRecommendation(effectiveStatus, localPercentile);
   const pmPlan = getProgressMonitoringPlan(recommendation.level, belowMeasureNames);
 
   return {
     composite,
     compositeStatus,
     compositeRisk: benchmarkStatusToRiskLabel(compositeStatus),
+    orfWordsStatus,
+    effectiveStatus,
+    orfDriven,
     localPercentile,
     subtests,
     recommendation,

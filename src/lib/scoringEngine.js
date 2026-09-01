@@ -48,6 +48,13 @@ export const BENCHMARK_REF = [
   ["1", "BOY", "nwf_wwr", 4, 1, 0],
   ["1", "MOY", "nwf_wwr", 17, 8, 3],
   ["1", "EOY", "nwf_wwr", 25, 13, 6],
+  // Grade 1 BOY ORF is a DIBELS 8th Edition addition (Acadience doesn't
+  // benchmark ORF until Grade 1 MOY) — source: DIBELS 8th Edition
+  // Benchmark Goals, Univ. of Oregon, updated July 2020 (reconfirmed
+  // against the Jan 2024 revision). Accuracy has no "Above Benchmark"
+  // tier in DIBELS 8 — "at" (67) is the top tier, so above is null.
+  ["1", "BOY", "orf_words", 35, 10, 5],
+  ["1", "BOY", "orf_accuracy", null, 67, 41],
   ["1", "MOY", "orf_words", 34, 23, 16],
   ["1", "EOY", "orf_words", 67, 47, 32],
   ["1", "MOY", "orf_accuracy", 86, 78, 68],
@@ -468,7 +475,7 @@ export const MEASURE_SCHEDULE = {
     EOY: ["lnf", "psf", "nwf_cls"],
   },
   1: {
-    BOY: ["lnf", "psf", "nwf_cls", "nwf_wwr"],
+    BOY: ["lnf", "psf", "nwf_cls", "nwf_wwr", "orf_words", "orf_accuracy"],
     MOY: ["nwf_cls", "nwf_wwr", "orf_words", "orf_accuracy"],
     EOY: ["nwf_cls", "nwf_wwr", "orf_words", "orf_accuracy", "retell"],
   },
