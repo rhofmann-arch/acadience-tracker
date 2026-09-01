@@ -174,22 +174,38 @@ export default function FluencyTrajectoryChart({ student, history, captiScores, 
             Goal: {ON_TRACK_END.cwpm}
           </text>
 
-          {/* Actual end label — only shown once the actual line reaches the
-              final period, where there's margin space for it; for a student
-              still mid-trajectory, the tooltip/table carry the latest value
-              instead of a label that would collide with a nearby dot */}
-          {lastActualIndex === n - 1 && (
-            <text
-              x={xFor(lastActualIndex, n) + 8}
-              y={yFor(actual[lastActualIndex]) + 18}
-              textAnchor="start"
-              fontSize={11}
-              fontWeight={700}
-              fill={ACTUAL_COLOR}
-            >
-              {Math.round(actual[lastActualIndex])} cwpm
-            </text>
-          )}
+          {/* Actual end label — always labels the most recent actual score.
+              At the final period there's margin space to the right, so it
+              sits beside the dot like the goal label. Mid-trajectory, it
+              sits above or below the dot (whichever side isn't occupied by
+              the goal dot at that same point) so it never collides. */}
+          {lastActualIndex >= 0 &&
+            (lastActualIndex === n - 1 ? (
+              <text
+                x={xFor(lastActualIndex, n) + 8}
+                y={yFor(actual[lastActualIndex]) + 18}
+                textAnchor="start"
+                fontSize={11}
+                fontWeight={700}
+                fill={ACTUAL_COLOR}
+              >
+                {Math.round(actual[lastActualIndex])} cwpm
+              </text>
+            ) : (
+              <text
+                x={xFor(lastActualIndex, n)}
+                y={
+                  yFor(actual[lastActualIndex]) +
+                  (actual[lastActualIndex] >= points[lastActualIndex].goalCwpm ? -14 : 19)
+                }
+                textAnchor="middle"
+                fontSize={11}
+                fontWeight={700}
+                fill={ACTUAL_COLOR}
+              >
+                {Math.round(actual[lastActualIndex])} cwpm
+              </text>
+            ))}
 
           {/* Goal points — dot + transparent hit target, hover/focus for tooltip */}
           {points.map((p, i) => (
