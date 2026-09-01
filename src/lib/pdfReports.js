@@ -1690,7 +1690,7 @@ function drawGrade1ReportPage(doc, student, grade, period, year, assessment) {
   }
   doc.setFontSize(13);
   doc.setTextColor(...COLORS.header);
-  doc.text("Recommendation", margin, y);
+  doc.text("Intervention Recommendation", margin, y);
   y += 16;
 
   const rec = assessment.recommendation;

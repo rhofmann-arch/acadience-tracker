@@ -17,6 +17,11 @@ credentials.json
 StudentRosterOptions*
 capti/
 
+# Raw student data exports/dumps (never commit real student records)
+*_iowa.txt
+*_for_*_tab.csv
+First Draft CLASS LISTS*.pdf
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
