@@ -1427,7 +1427,9 @@ function drawGrade1RecommendationBucketTable(doc, startY, margin, pageWidth, buc
   const head = [["Strong Recommendation", "Moderate Recommendation", "Watch", "On Track"]];
   const cols = [buckets.strong, buckets.moderate, buckets.watch, buckets.onTrack];
   const body = [cols.map((lines) => (lines.length > 0 ? lines.join("\n") : "—"))];
-  const headColors = [COLORS.wellBelow, COLORS.below, COLORS.actualLine, COLORS.above];
+  // On Track is the top/no-concern category, so it gets blue for continuity
+  // with mClass's convention (blue = Advanced there); Watch takes green.
+  const headColors = [COLORS.wellBelow, COLORS.below, COLORS.above, COLORS.actualLine];
 
   autoTable(doc, {
     startY,
