@@ -10,6 +10,7 @@ import {
   getStudentHistory,
   getCaptiScores,
   getIowaScores,
+  getGradeScores,
 } from "../lib/dataService";
 import {
   generateClassroomReport,
@@ -17,6 +18,8 @@ import {
   generateGrowthReport,
   generateClassFluencyReports,
   generateTeacherDashboard,
+  generateClassGrade1Reports,
+  generateGrade1TeacherDashboard,
 } from "../lib/pdfReports";
 import {
   getBenchmarkStatus,
@@ -399,6 +402,32 @@ export default function ClassroomSnapshot() {
             }}
           >
             Teacher Dashboard
+          </button>
+        </>)}
+
+        {data.length > 0 && grade === "1" && (<>
+          <button
+            className="btn-primary"
+            style={{ background: "#0f766e" }}
+            onClick={() => {
+              const gradeRows = getGradeScores(year, grade, period);
+              const localCompositeValues = gradeRows.map((r) => r.score?.composite).filter((v) => v != null);
+              const doc = generateClassGrade1Reports(grade, period, year, data, localCompositeValues);
+              doc.save(`Grade1_Risk_Reports_${classId}_${period}_${year}.pdf`);
+            }}
+          >
+            Print Grade 1 Risk Reports
+          </button>
+          <button
+            className="btn-primary"
+            style={{ background: "#9d174d" }}
+            onClick={() => {
+              const gradeRows = getGradeScores(year, grade, period);
+              const doc = generateGrade1TeacherDashboard(selectedClass, grade, period, year, data, gradeRows);
+              doc.save(`Grade1_Teacher_Dashboard_${classId}_${period}_${year}.pdf`);
+            }}
+          >
+            Grade 1 Teacher Dashboard
           </button>
         </>)}
       </div>

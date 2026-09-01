@@ -284,6 +284,34 @@ export function getClassScores(schoolYear, classId, period) {
 }
 
 /**
+ * Get scores for every student in a grade (across all homerooms) for a
+ * given school year and period — the "whole grade, whole school" peer
+ * group used for local-percentile comparisons.
+ */
+export function getGradeScores(schoolYear, grade, period) {
+  const gradeStudents = _enrollment.filter(
+    (e) => e.school_year === schoolYear && e.grade === grade
+  );
+
+  return gradeStudents
+    .map((enrollment) => {
+      const student = _studentMap.get(enrollment.student_id);
+      const score = _scores.find(
+        (s) =>
+          s.student_id === enrollment.student_id &&
+          s.school_year === schoolYear &&
+          s.period === period &&
+          s.assessment_type !== "progress_monitoring"
+      );
+      return { student, enrollment, score: score || null };
+    })
+    .filter((r) => r.student)
+    .sort((a, b) =>
+      (a.student.last_name || "").localeCompare(b.student.last_name || "")
+    );
+}
+
+/**
  * Get all periods' scores for a class in a year.
  * Returns array of { student, scores: { BOY, MOY, EOY } }.
  */

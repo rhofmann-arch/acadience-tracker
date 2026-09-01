@@ -8,6 +8,8 @@
  *   4. Fluency Growth Report — one student's fluency chart + comprehension summary
  *      (also available for a whole class, one page per student)
  *   5. Teacher Dashboard — whole-class fluency & comprehension risk tables
+ *   6. Grade 1 Reading Risk Report — composite-centered report + dashboard
+ *      for Grade 1 (and eventually Kindergarten EOY)
  */
 
 import jsPDF from "jspdf";
@@ -23,6 +25,13 @@ import {
 } from "./scoringEngine";
 import { ON_TRACK_TRAJECTORY, ON_TRACK_START, ON_TRACK_END, GRADE_EOY_GOAL, getActualScores } from "./trajectory";
 import { getComprehensionSummary, getComprehensionWeights } from "./comprehension";
+import {
+  buildGrade1Assessment,
+  getRecommendationReasoning,
+  getLocalPercentile,
+  getInterventionRecommendation,
+  ordinal,
+} from "./grade1Report";
 
 // ---------------------------------------------------------------------------
 // Colors and constants
@@ -1517,6 +1526,328 @@ export function generateTeacherDashboard(classInfo, grade, period, year, fluency
     doc.text(lines, margin, y);
     y += lines.length * 10;
   }
+
+  // Footer
+  const pageCount = doc.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      "Acadience Reading Tracker — Baymonte Christian School — Confidential",
+      pageWidth / 2, doc.internal.pageSize.getHeight() - 20,
+      { align: "center" }
+    );
+  }
+
+  return doc;
+}
+
+// ---------------------------------------------------------------------------
+// Grade 1 Reading Risk Report
+// ---------------------------------------------------------------------------
+
+/**
+ * Draw one student's Grade 1 Reading Risk Report onto the doc's *current*
+ * page — overall risk indicator, subtest-by-subtest breakdown with
+ * plain-language notes on how each predicts later reading success, and an
+ * intervention + progress-monitoring recommendation.
+ */
+function drawGrade1ReportPage(doc, student, grade, period, year, scoreRow, localCompositeValues) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 40;
+  let y = margin;
+
+  // --- Header ---
+  doc.setFontSize(18);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Grade 1 Reading Risk Report", margin, y);
+  y += 22;
+
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.subheader);
+  doc.text("Baymonte Christian School", margin, y);
+  doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin, y, { align: "right" });
+  y += 20;
+
+  doc.setFontSize(14);
+  doc.setTextColor(...COLORS.header);
+  doc.text(`${student.first_name} ${student.last_name}`, margin, y);
+  y += 16;
+
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.subheader);
+  const meta = [`ID: ${student.student_id}`];
+  if (student.dob) meta.push(`DOB: ${student.dob}`);
+  meta.push(`${year} · ${period} · ${GRADE_LABELS[grade] || "Grade " + grade}`);
+  doc.text(meta.join("  ·  "), margin, y);
+  y += 16;
+
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(1);
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 20;
+
+  const assessment = buildGrade1Assessment(grade, period, scoreRow, localCompositeValues);
+
+  // --- Overall Risk Indicator ---
+  doc.setFontSize(13);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Overall Risk Indicator", margin, y);
+  y += 16;
+
+  if (assessment.compositeRisk) {
+    const c = hexToRgb(assessment.compositeRisk.color);
+    doc.setFillColor(c[0], c[1], c[2]);
+    doc.roundedRect(margin, y - 12, 130, 22, 4, 4, "F");
+    doc.setFontSize(11);
+    doc.setFont(undefined, "bold");
+    doc.setTextColor(...COLORS.white);
+    doc.text(assessment.compositeRisk.label, margin + 65, y - 1, { align: "center", baseline: "middle" });
+    doc.setFont(undefined, "normal");
+  } else {
+    doc.setFontSize(10);
+    doc.setTextColor(...COLORS.subheader);
+    doc.text("No composite score on file this period.", margin, y);
+  }
+  y += 20;
+
+  doc.setFontSize(9);
+  doc.setTextColor(...COLORS.subheader);
+  const compositeLine = assessment.composite != null
+    ? `Composite: ${formatScore(assessment.composite)} — ${assessment.compositeStatus?.status || "no benchmark data"}`
+    : "Composite: not yet scored this period.";
+  doc.text(compositeLine, margin, y);
+  y += 13;
+
+  if (assessment.localPercentile != null) {
+    const n = (localCompositeValues || []).filter((v) => v != null).length;
+    doc.text(
+      `Ranks in the ${ordinal(assessment.localPercentile)} percentile among this year's Grade 1 ${period} students at Baymonte (n=${n}).`,
+      margin, y
+    );
+    y += 13;
+  }
+  y += 8;
+
+  // --- Subtest Breakdown ---
+  if (y > 560) {
+    doc.addPage();
+    y = margin;
+  }
+  doc.setFontSize(13);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Subtest Breakdown", margin, y);
+  y += 8;
+  doc.setFontSize(8);
+  doc.setTextColor(...COLORS.subheader);
+  doc.text("How each measure relates to later reading success:", margin, y);
+  y += 14;
+
+  for (const s of assessment.subtests) {
+    if (y > 700) {
+      doc.addPage();
+      y = margin;
+    }
+    doc.setFontSize(10);
+    doc.setFont(undefined, "bold");
+    doc.setTextColor(...COLORS.header);
+    doc.text(s.name, margin, y);
+
+    const valueText = s.value != null ? formatScore(s.value) : "—";
+    const statusText = s.hasBenchmark ? (s.status?.status || "no score") : "no benchmark — risk indicator";
+    const rightColor = s.risk ? hexToRgb(s.risk.color) : COLORS.subheader;
+    doc.setFontSize(9);
+    doc.setTextColor(rightColor[0], rightColor[1], rightColor[2]);
+    doc.text(`${valueText}   ·   ${statusText}`, pageWidth - margin, y, { align: "right" });
+    doc.setFont(undefined, "normal");
+    y += 12;
+
+    doc.setFontSize(8);
+    doc.setTextColor(...COLORS.subheader);
+    const lines = doc.splitTextToSize(s.note, pageWidth - margin * 2);
+    doc.text(lines, margin, y);
+    y += lines.length * 10 + 10;
+  }
+
+  // --- Recommendation ---
+  if (y > 600) {
+    doc.addPage();
+    y = margin;
+  }
+  doc.setFontSize(13);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Recommendation", margin, y);
+  y += 16;
+
+  const rec = assessment.recommendation;
+  const recColor = hexToRgb(rec.risk.color);
+  doc.setFillColor(recColor[0], recColor[1], recColor[2]);
+  doc.roundedRect(margin, y - 12, 150, 24, 4, 4, "F");
+  doc.setFontSize(12);
+  doc.setFont(undefined, "bold");
+  doc.setTextColor(...COLORS.white);
+  doc.text(rec.level, margin + 75, y + 1, { align: "center", baseline: "middle" });
+  doc.setFont(undefined, "normal");
+
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.header);
+  const freqText = rec.days > 0
+    ? `${rec.days} day${rec.days === 1 ? "" : "s"}/week, 30 min, Orton-Gillingham`
+    : "No formal intervention recommended";
+  doc.text(freqText, margin + 160, y + 1, { baseline: "middle" });
+  y += 26;
+
+  doc.setFontSize(9);
+  doc.setTextColor(...COLORS.subheader);
+  const reasonLines = doc.splitTextToSize(getRecommendationReasoning(assessment), pageWidth - margin * 2);
+  doc.text(reasonLines, margin, y);
+  y += reasonLines.length * 11 + 10;
+
+  doc.setFontSize(9);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Progress Monitoring:", margin, y);
+  y += 12;
+  doc.setFontSize(8.5);
+  doc.setTextColor(...COLORS.subheader);
+  const pmLines = doc.splitTextToSize(assessment.pmPlan.text, pageWidth - margin * 2);
+  doc.text(pmLines, margin, y);
+  y += pmLines.length * 10;
+
+  // Footer (current page only — see drawFluencyReportPage for why)
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  doc.text(
+    "Acadience Reading Tracker — Baymonte Christian School — Confidential",
+    pageWidth / 2, doc.internal.pageSize.getHeight() - 20,
+    { align: "center" }
+  );
+}
+
+/**
+ * Grade 1 Reading Risk Report for one student.
+ *
+ * @param {object} student
+ * @param {string} grade - "1" (Kindergarten EOY planned for later)
+ * @param {string} period - "BOY" | "MOY" | "EOY"
+ * @param {string} year
+ * @param {object|null} scoreRow - this student's score row for the period
+ * @param {Array<number>} localCompositeValues - every Grade 1 student's
+ *   composite score this year/period (whole school), for the percentile
+ */
+export function generateGrade1Report(student, grade, period, year, scoreRow, localCompositeValues) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+  drawGrade1ReportPage(doc, student, grade, period, year, scoreRow, localCompositeValues);
+  return doc;
+}
+
+/**
+ * Same report as generateGrade1Report, one page per student, for an entire
+ * class — a single print job for the whole homeroom.
+ *
+ * @param {Array<{ student, score }>} roster - e.g. getClassScores() rows
+ */
+export function generateClassGrade1Reports(grade, period, year, roster, localCompositeValues) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+  roster.forEach(({ student, score }, i) => {
+    if (i > 0) doc.addPage();
+    drawGrade1ReportPage(doc, student, grade, period, year, score, localCompositeValues);
+  });
+  return doc;
+}
+
+/**
+ * Grade 1 Teacher Dashboard — the homeroom sorted into the same four risk
+ * tiers as generateTeacherDashboard, but driven by the Composite Score
+ * (and each student's percentile within the whole Grade 1 cohort) rather
+ * than ORF, since Grade 1 doesn't have fluency/comprehension measures the
+ * way Grades 2+ do.
+ *
+ * @param {object} classInfo - { class_id, teacher, grade }
+ * @param {Array<{ student, score }>} classRows - this homeroom, e.g. getClassScores()
+ * @param {Array<{ student, score }>} gradeRows - whole Grade 1, e.g. getGradeScores() — the percentile peer group
+ */
+export function generateGrade1TeacherDashboard(classInfo, grade, period, year, classRows, gradeRows) {
+  const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "letter" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const margin = 40;
+  let y = margin;
+
+  doc.setFontSize(18);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Grade 1 Teacher Dashboard", margin, y);
+  y += 22;
+
+  doc.setFontSize(10);
+  doc.setTextColor(...COLORS.subheader);
+  doc.text("Baymonte Christian School", margin, y);
+  doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - margin, y, { align: "right" });
+  y += 18;
+
+  doc.setFontSize(12);
+  doc.setTextColor(...COLORS.header);
+  doc.text(
+    `${year}  ·  ${period}  ·  Grade 1  ·  ${classInfo.teacher || ""} (${classInfo.class_id || ""})`,
+    margin, y
+  );
+  y += 16;
+
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(1);
+  doc.line(margin, y, pageWidth - margin, y);
+  y += 20;
+
+  doc.setFontSize(13);
+  doc.setTextColor(...COLORS.header);
+  doc.text("Reading Risk — Composite Score", margin, y);
+  y += 16;
+
+  const compRef = getThresholds(grade, period, "composite");
+  if (compRef) {
+    doc.setFontSize(9);
+    doc.setTextColor(...COLORS.subheader);
+    doc.text(`Benchmark for ${GRADE_LABELS[grade] || "Grade " + grade} ${period}:  ${formatBenchmarkRanges(compRef)}`, margin, y);
+    y += 16;
+  }
+
+  const gradeCompositeValues = (gradeRows || []).map((r) => r.score?.composite).filter((v) => v != null);
+
+  const buckets = { highRisk: [], someRisk: [], onTrack: [], advanced: [] };
+  const noScore = [];
+  for (const { student, score } of classRows) {
+    const composite = score?.composite;
+    if (composite == null) {
+      noScore.push(studentName(student));
+      continue;
+    }
+    const status = getBenchmarkStatus(grade, period, "composite", composite);
+    const pct = getLocalPercentile(gradeCompositeValues, composite);
+    const rec = getInterventionRecommendation(status, pct);
+    const line = `${studentName(student)} — ${formatScore(composite)}${pct != null ? ` (${ordinal(pct)} %ile)` : ""}`;
+    if (!pushToRiskBucket(buckets, rec.risk, line)) noScore.push(studentName(student));
+  }
+
+  y = drawRiskBucketTable(doc, y, margin, pageWidth, buckets) + 10;
+
+  if (noScore.length > 0) {
+    doc.setFontSize(8);
+    doc.setTextColor(148, 163, 184);
+    const lines = doc.splitTextToSize(`No composite score this period: ${noScore.join("; ")}`, pageWidth - margin * 2);
+    doc.text(lines, margin, y);
+    y += lines.length * 10 + 10;
+  }
+
+  doc.setFontSize(8);
+  doc.setTextColor(148, 163, 184);
+  const noteLines = doc.splitTextToSize(
+    "Buckets reflect the recommended intervention level (Strong = 4 days/week, Moderate = 2 days/week, Monitor/" +
+    "None = no formal intervention), which factors in both the national composite benchmark and how each student " +
+    "compares to this year's whole Grade 1 cohort at Baymonte — see each student's Grade 1 Reading Risk Report " +
+    "for the full breakdown and reasoning. Intervention model: Orton-Gillingham, 30 minutes per session.",
+    pageWidth - margin * 2
+  );
+  doc.text(noteLines, margin, y);
+  y += noteLines.length * 10;
 
   // Footer
   const pageCount = doc.getNumberOfPages();
